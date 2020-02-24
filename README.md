@@ -10,7 +10,9 @@ Why prefer `NodePort` over `LoadBalancer` type services in the first place?
 
 `NodePort` allows you to:
 
-- Avoid recreating ELB/ALB/NLB when you recreate the Kubernetes cluster. There's no need to pre-warn your ELB before switching huge production traffic from the old to the new cluster anymore.
+- Avoid recreating ELB/ALB/NLB when you recreate the Kubernetes cluster
+  - There's no need to pre-warn your ELB before switching huge production traffic from the old to the new cluster anymore.
+  - There's no need to wait for DNS to propagate changes in your endpoint that directs the traffic to the LB anymore.
 
 Why not use `aws-alb-ingress-controller` with the `IP` target mode that directs the traffic to directory to the `aws-vpc-cni-k8s`-managed Pod/ENI IP?
 
