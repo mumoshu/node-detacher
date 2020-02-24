@@ -1,0 +1,6 @@
+bin/
+.gocache/
+.go/
+vendor
+.idea/
+*~
