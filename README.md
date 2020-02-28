@@ -29,6 +29,13 @@ With this application in place, the overall node shutdown process with Cluster A
 - ELB(s) still gradually stop directing the traffic to the nodes. The backend Kubernetes service and pods will starst to receive less and less traffic.
 - ELB(s) stops directing traffic as the EC2 instances are detached. Application processes running inside pods can safely terminates
 
+## Recommended Usage
+
+- Run `aws-asg-roller` along with `node-detacher` in order to avoid potential downtime due to ELB not reacting to node termination fast enough
+- Run `cluster-autoscaler` along with `node-detacher` in order to avoid downtime on scale down
+- Run `node-problem-detector` to detect unhealthy nodes and [draino](https://github.com/planetlabs/draino) to automatically drain such nodes. Add `node-detacher` so that node termination triggered by `draino` doesn' result in downtime. See https://github.com/kubernetes/node-problem-detector#remedy-systems
+  - Optionally add more node-problem-detector rules by referencing [uswitch's prebuilt rules](https://github.com/uswitch/node-problem-detector)
+
 ## Requirements
 
 **IAM Permissions**:
@@ -185,5 +192,3 @@ $ make image BUILD=local     # builds the docker image
 ## Acknowledgements
 
 The initial version of `node-detacher` is proudly based on @deitch's [aws-asg-roller](https://github.com/deitch/aws-asg-roller) which serves a different use-case. Big kudos to @deitch for authoring and sharing the great product! This product wouldn't have born without it.
-
-I also recommend that co-running `aws-asg-roller` and `node-detacher` in order to avoid potential downtime due to ELB not reacting to node termination fast enough.
