@@ -1,64 +1,102 @@
+/*
+Copyright 2020 The node-detacher authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package main
 
 import (
-	"fmt"
-	"log"
+	"flag"
 	"os"
-	"strconv"
 	"time"
-)
 
-const (
-	asgCheckDelay = 30 // Default delay between checks of ASG status in seconds
+	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	// +kubebuilder:scaffold:imports
 )
 
 var (
-	verbose = os.Getenv("VERBOSE") == "true"
+	scheme   = runtime.NewScheme()
+	setupLog = ctrl.Log.WithName("setup")
 )
 
+func init() {
+	_ = clientgoscheme.AddToScheme(scheme)
+
+	// +kubebuilder:scaffold:scheme
+}
+
 func main() {
-	// get a kube connection
-	k8sSvc, err := createK8sService()
+	var (
+		syncPeriod           time.Duration
+		metricsAddr          string
+		enableLeaderElection bool
+	)
+
+	flag.DurationVar(&syncPeriod, "sync-period", 10*time.Second, "The period in seconds between each forceful iteration over all the nodes")
+	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
+	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
+		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
+	flag.Parse()
+
+	ctrl.SetLogger(zap.New(func(o *zap.Options) {
+		o.Development = true
+	}))
+
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Scheme:             scheme,
+		MetricsBindAddress: metricsAddr,
+		LeaderElection:     enableLeaderElection,
+		SyncPeriod:         &syncPeriod,
+		Port:               9443,
+	})
 	if err != nil {
-		log.Fatalf("Error getting kubernetes KubernetesService handler when required: %v", err)
+		setupLog.Error(err, "unable to start manager")
+		os.Exit(1)
 	}
 
 	// get the AWS sessions
-	asgSvc, err := awsGetServices()
+	asgSvc, elbSvc, elbv2Svc, err := awsGetServices()
 	if err != nil {
-		log.Fatalf("Unable to create an AWS session: %v", err)
+		setupLog.Error(err, "Unable to create an AWS session")
+		os.Exit(1)
 	}
 
-	// to keep track of original target sizes during rolling updates
-	detachingNodes := map[string]map[string]bool{}
-
-	checkDelay, err := getDelay()
-	if err != nil {
-		log.Fatalf("Unable to get delay: %s", err.Error())
+	nodeReconciler := &NodeReconciler{
+		Client:                mgr.GetClient(),
+		Log:                   ctrl.Log.WithName("controllers").WithName("Runner"),
+		Scheme:                mgr.GetScheme(),
+		asgSvc:                asgSvc,
+		elbSvc:                elbSvc,
+		elbv2Svc:              elbv2Svc,
+		detachingNodes:        map[string]map[string]bool{},
+		deregisteringNodes:    map[string]map[string]bool{},
+		deregisteringNodesCLB: map[string]map[string]bool{},
 	}
 
-	// infinite loop
-	for {
-		err := detachUnschedulables(asgSvc, k8sSvc, detachingNodes)
-		if err != nil {
-			log.Printf("Error adjusting AutoScaling Groups: %v", err)
-		}
-		// delay with each loop
-		log.Printf("Sleeping %d seconds\n", checkDelay)
-		time.Sleep(time.Duration(checkDelay) * time.Second)
-	}
-}
-
-// Returns delay value to use in loop. Uses default if not defined.
-func getDelay() (int, error) {
-	delayOverride, exist := os.LookupEnv("ROLLER_CHECK_DELAY")
-	if exist {
-		delay, err := strconv.Atoi(delayOverride)
-		if err != nil {
-			return -1, fmt.Errorf("ROLLER_CHECK_DELAY is not parsable: %v (%s)", delayOverride, err.Error())
-		}
-		return delay, nil
+	if err = nodeReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Node")
+		os.Exit(1)
 	}
 
-	return asgCheckDelay, nil
+	// +kubebuilder:scaffold:builder
+
+	setupLog.Info("starting manager")
+	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+		setupLog.Error(err, "problem running manager")
+		os.Exit(1)
+	}
 }

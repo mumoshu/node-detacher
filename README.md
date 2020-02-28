@@ -163,13 +163,21 @@ spec:
 
 ## Configuration
 
-`node-detacher` takes its configuration via environment variables. All environment variables that affect ASG Roller begin with `ROLLER_`.
+`node-detacher` takes its configuration via command-line flags:
 
-* `RESYNC_INTERNAL`: Seconds between syncs.
-
-* `VERBOSE`: If set to `true`, will increase verbosity of logs.
-
-* `KUBECONFIG`: Path to kubernetes config file for authenticating to the kubernetes cluster. Required only if `ROLLER_KUBERNETES` is `true` and we are not operating in a kubernetes cluster. If omitted, in-cluster configuration is used.
+```hcl
+Usage of node-detacher:
+  -enable-leader-election
+    	Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.
+  -kubeconfig string
+    	Paths to a kubeconfig. Only required if out-of-cluster.
+  -master --kubeconfig
+    	(Deprecated: switch to --kubeconfig) The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.
+  -metrics-addr string
+    	The address the metric endpoint binds to. (default ":8080")
+  -sync-period duration
+    	The period in seconds between each forceful iteration over all the nodes (default 10s)
+```
 
 ## Build Instruction
 
@@ -187,6 +195,15 @@ To build locally:
 ```sh
 $ make build BUILD=local     # builds the binary via locally installed go in `bin/node-detacher-${OS}-${ARCH}
 $ make image BUILD=local     # builds the docker image
+```
+
+## Test instruction
+
+For Docker for Mac:
+
+```
+$ k label node docker-desktop alpha.eksctl.io/instance-id=foobar
+$ go run .
 ```
 
 ## Acknowledgements

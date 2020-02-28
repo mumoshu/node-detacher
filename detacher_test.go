@@ -11,7 +11,7 @@ import (
 
 type testKubernetesService struct {
 	unscheduableNodes []corev1.Node
-	err   error
+	err               error
 }
 
 func (t *testKubernetesService) getUnschedulableNodes() ([]corev1.Node, error) {
@@ -27,7 +27,7 @@ func TestLoop(t *testing.T) {
 		oldIds                  map[string][]string
 		newIds                  map[string][]string
 		asgOriginalDesired      map[string]int64
-		originalDesired         map[string]int64
+		originalDesired         map[string]map[string]bool
 		newOriginalDesired      map[string]int64
 		newDesired              map[string]int64
 		expectedOriginalDesired map[string]int64
@@ -47,7 +47,7 @@ func TestLoop(t *testing.T) {
 				"anotherasg": {"8", "9", "10"},
 			},
 			map[string]int64{"myasg": 2, "anotherasg": 10},
-			map[string]int64{"myasg": 2, "anotherasg": 10},
+			map[string]map[string]bool{"node1":map[string]bool{"myasg": true}},
 			map[string]int64{"myasg": 2, "anotherasg": 0},
 			map[string]int64{"myasg": 2},
 			map[string]int64{"myasg": 2, "anotherasg": 0},
@@ -67,7 +67,7 @@ func TestLoop(t *testing.T) {
 				"anotherasg": {"8", "9", "10"},
 			},
 			map[string]int64{"myasg": 2},
-			map[string]int64{},
+			map[string]map[string]bool{},
 			map[string]int64{"myasg": 2},
 			map[string]int64{"myasg": 3},
 			map[string]int64{"myasg": 2},
@@ -112,18 +112,12 @@ func TestLoop(t *testing.T) {
 			asgSvc := &mockAsgSvc{
 				groups: validGroups,
 			}
-			// convert maps from map[string] to map[*string]
-			originalDesiredPtr := map[*string]int64{}
-			for k, v := range tt.originalDesired {
-				ks := k
-				originalDesiredPtr[&ks] = v
-			}
-			newDesiredPtr := map[*string]int64{}
-			for k, v := range tt.newDesired {
-				ks := k
-				newDesiredPtr[&ks] = v
-			}
-			err := detachUnschedulables(asgSvc, tt.handler, tt.originalDesired)
+
+			elbSvc := &mockElbSvc{}
+
+			elbv2Svc := &mockELbV2Svc{}
+
+			err := detachUnschedulables(asgSvc, elbSvc, elbv2Svc, tt.handler, tt.originalDesired, tt.originalDesired, tt.originalDesired)
 			// what were our last calls to each?
 			switch {
 			case (err == nil && tt.err != nil) || (err != nil && tt.err == nil) || (err != nil && tt.err != nil && !strings.HasPrefix(err.Error(), tt.err.Error())):
