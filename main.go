@@ -76,12 +76,16 @@ func main() {
 	}
 
 	nodeReconciler := &NodeReconciler{
-		Client:                mgr.GetClient(),
-		Log:                   ctrl.Log.WithName("controllers").WithName("Runner"),
-		Scheme:                mgr.GetScheme(),
-		asgSvc:                asgSvc,
-		elbSvc:                elbSvc,
-		elbv2Svc:              elbv2Svc,
+		Client: mgr.GetClient(),
+		Log:    ctrl.Log.WithName("controllers").WithName("Runner"),
+		Scheme: mgr.GetScheme(),
+		nodes: &Nodes{
+			Log:      ctrl.Log.WithName("models").WithName("Nodes"),
+			client:   mgr.GetClient(),
+			asgSvc:   asgSvc,
+			elbSvc:   elbSvc,
+			elbv2Svc: elbv2Svc,
+		},
 		detachingNodes:        map[string]map[string]bool{},
 		deregisteringNodes:    map[string]map[string]bool{},
 		deregisteringNodesCLB: map[string]map[string]bool{},

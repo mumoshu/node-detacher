@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/autoscaling/autoscalingiface"
 	"github.com/aws/aws-sdk-go/service/elb/elbiface"
 	"github.com/aws/aws-sdk-go/service/elbv2/elbv2iface"
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -15,24 +16,44 @@ const (
 	NodeLabelPrefix = "node-detacher.variant.run"
 )
 
-func labelAllNodes(client client.Client, asgSvc autoscalingiface.AutoScalingAPI, elbSvc elbiface.ELBAPI, elbv2Svc elbv2iface.ELBV2API) error {
+var KeyLabeled string
+
+func init() {
+	KeyLabeled = fmt.Sprintf("%s/labeled", NodeLabelPrefix)
+}
+
+type Nodes struct {
+	Log logr.Logger
+
+	client   client.Client
+	asgSvc   autoscalingiface.AutoScalingAPI
+	elbSvc   elbiface.ELBAPI
+	elbv2Svc elbv2iface.ELBV2API
+	k8sSvc   KubernetesService
+}
+
+func (n *Nodes) labelAllNodes() error {
 	nodes := corev1.NodeList{
 		Items: []corev1.Node{},
 	}
 
-	if err := client.List(context.Background(), &nodes); err != nil {
+	if err := n.client.List(context.Background(), &nodes); err != nil {
 		return err
 	}
 
-	return labelNodes(client, asgSvc, elbSvc, elbv2Svc, nodes.Items)
+	return n.labelNodes(nodes.Items)
 }
 
-func labelNodes(client client.Client, asgSvc autoscalingiface.AutoScalingAPI, elbSvc elbiface.ELBAPI, elbv2Svc elbv2iface.ELBV2API, nodes []corev1.Node) error {
+func (n *Nodes) labelNodes(nodes []corev1.Node) error {
 	nodeToInstance := map[string]string{}
 
 	var instanceIDs []string
 
 	for _, node := range nodes {
+		if node.Labels[KeyLabeled] == "true" {
+			continue
+		}
+
 		instanceId, err := getInstanceID(node)
 		if err != nil {
 			return err
@@ -43,17 +64,23 @@ func labelNodes(client client.Client, asgSvc autoscalingiface.AutoScalingAPI, el
 		instanceIDs = append(instanceIDs, instanceId)
 	}
 
-	instanceToASGs, err := getIdToASGs(asgSvc, instanceIDs)
+	if len(instanceIDs) == 0 {
+		n.Log.Info(fmt.Sprintf("%d instances has been already labeled with %q", len(nodes), KeyLabeled))
+
+		return nil
+	}
+
+	instanceToASGs, err := getIdToASGs(n.asgSvc, instanceIDs)
 	if err != nil {
 		return err
 	}
 
-	instanceToCLBs, err := getIdToCLBs(elbSvc, instanceIDs)
+	instanceToCLBs, err := getIdToCLBs(n.elbSvc, instanceIDs)
 	if err != nil {
 		return err
 	}
 
-	instanceToTGs, err := getIdToTGs(elbv2Svc, instanceIDs)
+	instanceToTGs, err := getIdToTGs(n.elbv2Svc, instanceIDs)
 	if err != nil {
 		return err
 	}
@@ -68,7 +95,7 @@ func labelNodes(client client.Client, asgSvc autoscalingiface.AutoScalingAPI, el
 
 		ctx := context.Background()
 
-		if err := client.Get(ctx, types.NamespacedName{Name: node.Name}, &latest); err != nil {
+		if err := n.client.Get(ctx, types.NamespacedName{Name: node.Name}, &latest); err != nil {
 			return err
 		}
 
@@ -84,9 +111,9 @@ func labelNodes(client client.Client, asgSvc autoscalingiface.AutoScalingAPI, el
 			latest.Labels[fmt.Sprintf("clb.%s/%s", NodeLabelPrefix, clb)] = ""
 		}
 
-		latest.Labels[fmt.Sprintf("%s/labeled", NodeLabelPrefix)] = "true"
+		latest.Labels[KeyLabeled] = "true"
 
-		if err := client.Update(ctx, &latest); err != nil {
+		if err := n.client.Update(ctx, &latest); err != nil {
 			return err
 		}
 	}

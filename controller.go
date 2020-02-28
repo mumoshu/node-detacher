@@ -18,9 +18,6 @@ package main
 
 import (
 	"context"
-	"github.com/aws/aws-sdk-go/service/autoscaling/autoscalingiface"
-	"github.com/aws/aws-sdk-go/service/elb/elbiface"
-	"github.com/aws/aws-sdk-go/service/elbv2/elbv2iface"
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -40,9 +37,7 @@ type NodeReconciler struct {
 	Log                   logr.Logger
 	Recorder              record.EventRecorder
 	Scheme                *runtime.Scheme
-	asgSvc                autoscalingiface.AutoScalingAPI
-	elbSvc                elbiface.ELBAPI
-	elbv2Svc              elbv2iface.ELBV2API
+	nodes                 *Nodes
 	detachingNodes        map[string]map[string]bool
 	deregisteringNodes    map[string]map[string]bool
 	deregisteringNodesCLB map[string]map[string]bool
@@ -57,13 +52,11 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	log := r.Log.WithValues("node", req.NamespacedName)
 
 	if !r.synced {
-		if err := labelAllNodes(r.Client, r.asgSvc, r.elbSvc, r.elbv2Svc); err != nil {
+		if err := r.nodes.labelAllNodes(); err != nil {
 			log.Error(err, "Unable to label all nodes")
 		}
 
 		r.synced = true
-
-		return ctrl.Result{}, nil
 	}
 
 	var node corev1.Node
@@ -88,12 +81,8 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		}
 	}
 
-	if err := detachNodes(
-		r.asgSvc, r.elbSvc, r.elbv2Svc,
+	if err := r.nodes.detachNodes(
 		[]corev1.Node{*updated},
-		r.detachingNodes,
-		r.deregisteringNodes,
-		r.deregisteringNodesCLB,
 	); err != nil {
 		log.Error(err, "Failed to detach nodes")
 
