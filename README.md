@@ -31,9 +31,9 @@ With this application in place, the overall node shutdown process with Cluster A
 
 ## Recommended Usage
 
-- Run `aws-asg-roller` along with `node-detacher` in order to avoid potential downtime due to ELB not reacting to node termination fast enough
+- Run [`aws-asg-roller`](https://github.com/deitch/aws-asg-roller) along with `node-detacher` in order to avoid potential downtime due to ELB not reacting to node termination fast enough
 - Run `cluster-autoscaler` along with `node-detacher` in order to avoid downtime on scale down
-- Run `node-problem-detector` to detect unhealthy nodes and [draino](https://github.com/planetlabs/draino) to automatically drain such nodes. Add `node-detacher` so that node termination triggered by `draino` doesn' result in downtime. See https://github.com/kubernetes/node-problem-detector#remedy-systems
+- Run [`node-problem-detector`](https://github.com/kubernetes/node-problem-detector) to detect unhealthy nodes and [draino](https://github.com/planetlabs/draino) to automatically drain such nodes. Add `node-detacher` so that node termination triggered by `draino` doesn' result in downtime. See https://github.com/kubernetes/node-problem-detector#remedy-systems
   - Optionally add more node-problem-detector rules by referencing [uswitch's prebuilt rules](https://github.com/uswitch/node-problem-detector)
 
 ## Requirements
