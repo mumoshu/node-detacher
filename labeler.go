@@ -80,7 +80,7 @@ func (n *Nodes) labelNodes(nodes []corev1.Node) error {
 		return err
 	}
 
-	instanceToTGs, err := getIdToTGs(n.elbv2Svc, instanceIDs)
+	_, instancToTDs, err := getIdToTGs(n.elbv2Svc, instanceIDs)
 	if err != nil {
 		return err
 	}
@@ -89,7 +89,7 @@ func (n *Nodes) labelNodes(nodes []corev1.Node) error {
 		instance := nodeToInstance[node.Name]
 		asgs := instanceToASGs[instance]
 		clbs := instanceToCLBs[instance]
-		tgs := instanceToTGs[instance]
+		tds := instancToTDs[instance]
 
 		var latest corev1.Node
 
@@ -99,16 +99,28 @@ func (n *Nodes) labelNodes(nodes []corev1.Node) error {
 			return err
 		}
 
-		for _, asg := range asgs {
-			latest.Labels[fmt.Sprintf("asg.%s/%s", NodeLabelPrefix, asg)] = ""
+		tryset := func(k string) {
+			if _, ok := latest.Labels[k]; !ok {
+				latest.Labels[k] = ""
+			}
 		}
 
-		for _, tg := range tgs {
-			latest.Labels[fmt.Sprintf("tg.%s/%s", NodeLabelPrefix, tg)] = ""
+		for _, asg := range asgs {
+			tryset(fmt.Sprintf("asg.%s/%s", NodeLabelPrefix, asg))
+		}
+
+		for arn, tds := range tds {
+			for _, td := range tds {
+				if td.Port == nil {
+					tryset(fmt.Sprintf("tg.%s/%s", NodeLabelPrefix, arn))
+				} else {
+					tryset(fmt.Sprintf("tg.%s/%s/%d", NodeLabelPrefix, arn, *td.Port))
+				}
+			}
 		}
 
 		for _, clb := range clbs {
-			latest.Labels[fmt.Sprintf("clb.%s/%s", NodeLabelPrefix, clb)] = ""
+			tryset(fmt.Sprintf("clb.%s/%s", NodeLabelPrefix, clb))
 		}
 
 		latest.Labels[KeyLabeled] = "true"

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/aws/aws-sdk-go/service/elb"
 	"github.com/aws/aws-sdk-go/service/elb/elbiface"
+	"strconv"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -82,9 +83,9 @@ func getIdToASGs(svc autoscalingiface.AutoScalingAPI, ids []string) (map[string]
 	return idToASGs, nil
 }
 
-func getIdToTGs(svc elbv2iface.ELBV2API, ids []string) (map[string][]string, error) {
+func getIdToTGs(svc elbv2iface.ELBV2API, ids []string) (map[string][]string, map[string]map[string][]elbv2.TargetDescription, error) {
 	if len(ids) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	tgInput := &elbv2.DescribeTargetGroupsInput{
@@ -98,17 +99,19 @@ func getIdToTGs(svc elbv2iface.ELBV2API, ids []string) (map[string][]string, err
 		return !lastPage
 	})
 	if err != nil {
-		return nil, fmt.Errorf("Unable to get description for node %v: %v", ids, err)
+		return nil, nil, fmt.Errorf("Unable to get description for node %v: %v", ids, err)
 	}
 
 	idToTGs := map[string][]string{}
+
+	idToTDs := map[string]map[string][]elbv2.TargetDescription{}
 
 	for _, tg := range tgs {
 		output, err := svc.DescribeTargetHealth(&elbv2.DescribeTargetHealthInput{
 			TargetGroupArn: tg.TargetGroupArn,
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		for _, desc := range output.TargetHealthDescriptions {
@@ -118,11 +121,23 @@ func getIdToTGs(svc elbv2iface.ELBV2API, ids []string) (map[string][]string, err
 				idToTGs[id] = []string{}
 			}
 
-			idToTGs[id] = append(idToTGs[id], *tg.TargetGroupArn)
+			arn := *tg.TargetGroupArn
+
+			idToTGs[id] = append(idToTGs[id], arn)
+
+			if _, ok := idToTDs[id]; !ok {
+				idToTDs[id] = map[string][]elbv2.TargetDescription{}
+			}
+
+			if _, ok := idToTDs[id][arn]; !ok {
+				idToTDs[id][arn] = []elbv2.TargetDescription{}
+			}
+
+			idToTDs[id][arn] = append(idToTDs[id][arn], *desc.Target)
 		}
 	}
 
-	return idToTGs, nil
+	return idToTGs, idToTDs, nil
 }
 
 func detachInstancesFromASGs(svc autoscalingiface.AutoScalingAPI, asgName string, instanceIDs []string) error {
@@ -185,6 +200,43 @@ func deregisterInstancesFromCLBs(svc elbiface.ELBAPI, lbName string, instanceIDs
 			// Print the error, cast err to awserr.Error to get the Code and
 			// Message from an error.
 			return fmt.Errorf("Unknown non-aws error when deregistering instances: %v", err.Error())
+		}
+	}
+	return nil
+}
+
+func deregisterInstanceFromTG(svc elbv2iface.ELBV2API, tgName string, instanceID string, port string) error {
+	descs := []*elbv2.TargetDescription{}
+
+	portNum, err := strconv.Atoi(port)
+	if err != nil {
+		return fmt.Errorf("invalid port %q: %w", port, err)
+	}
+
+	descs = append(descs, &elbv2.TargetDescription{
+		Id:   aws.String(instanceID),
+		Port: aws.Int64(int64(portNum)),
+	})
+
+	input := &elbv2.DeregisterTargetsInput{
+		TargetGroupArn: aws.String(tgName),
+		Targets:        descs,
+	}
+
+	// See https://docs.aws.amazon.com/autoscaling/ec2/APIReference/API_DetachInstances.html for the API spec
+	if _, err := svc.DeregisterTargets(input); err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+
+			switch aerr.Code() {
+			case autoscaling.ErrCodeResourceContentionFault:
+				return fmt.Errorf("Could not deregister targets, any resource is in contention, will try in next loop")
+			default:
+				return fmt.Errorf("Unknown aws error when deregistering targets: %v", aerr.Error())
+			}
+		} else {
+			// Print the error, cast err to awserr.Error to get the Code and
+			// Message from an error.
+			return fmt.Errorf("Unknown non-aws error when deregistering targets: %v", err.Error())
 		}
 	}
 	return nil

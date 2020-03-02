@@ -29,6 +29,19 @@ With this application in place, the overall node shutdown process with Cluster A
 - ELB(s) still gradually stop directing the traffic to the nodes. The backend Kubernetes service and pods will starst to receive less and less traffic.
 - ELB(s) stops directing traffic as the EC2 instances are detached. Application processes running inside pods can safely terminates
 
+## Algorithm
+
+`node-detacher` runs the following steps in a control loop:
+
+- On `Node` resource change -
+- Is the node exists?
+  - No -> The node is already terminated. We have nothing to do no matter if it's properly detached from LBs or not. Exit this loop.
+- Is the node is unschedulable?
+  - No -> The node is not scheduled for termination. Exit this loop.
+- Is the node has condition `NodeDetatching` set to `True`?
+  - Yes -> The node is already scheduled for detachment/deregistration. All we need is to hold on and wish the node to properly deregistered from LBs in time. Ecit the loop.
+- Deregister the node from all the target groups, CLBs and ASGs
+
 ## Recommended Usage
 
 - Run [`aws-asg-roller`](https://github.com/deitch/aws-asg-roller) along with `node-detacher` in order to avoid potential downtime due to ELB not reacting to node termination fast enough

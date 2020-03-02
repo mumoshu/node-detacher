@@ -23,6 +23,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -86,7 +87,7 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	); err != nil {
 		log.Error(err, "Failed to detach nodes")
 
-		return ctrl.Result{}, err
+		return ctrl.Result{RequeueAfter: 1 * time.Second}, err
 	}
 
 	updated.Status.Conditions = append(updated.Status.Conditions, corev1.NodeCondition{
@@ -105,7 +106,7 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 }
 
 func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.Recorder = mgr.GetEventRecorderFor("runner-controller")
+	r.Recorder = mgr.GetEventRecorderFor("node-detacher")
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Node{}).
