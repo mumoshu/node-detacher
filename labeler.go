@@ -70,10 +70,10 @@ func (n *Nodes) labelNodes(nodes []corev1.Node) error {
 		return nil
 	}
 
-	instanceToASGs, err := getIdToASGs(n.asgSvc, instanceIDs)
-	if err != nil {
-		return err
-	}
+	//instanceToASGs, err := getIdToASGs(n.asgSvc, instanceIDs)
+	//if err != nil {
+	//	return err
+	//}
 
 	instanceToCLBs, err := getIdToCLBs(n.elbSvc, instanceIDs)
 	if err != nil {
@@ -87,7 +87,7 @@ func (n *Nodes) labelNodes(nodes []corev1.Node) error {
 
 	for _, node := range nodes {
 		instance := nodeToInstance[node.Name]
-		asgs := instanceToASGs[instance]
+		//asgs := instanceToASGs[instance]
 		clbs := instanceToCLBs[instance]
 		tds := instancToTDs[instance]
 
@@ -105,9 +105,9 @@ func (n *Nodes) labelNodes(nodes []corev1.Node) error {
 			}
 		}
 
-		for _, asg := range asgs {
-			tryset(fmt.Sprintf("asg.%s/%s", NodeLabelPrefix, asg))
-		}
+		//for _, asg := range asgs {
+		//	tryset(fmt.Sprintf("asg.%s/%s", NodeLabelPrefix, asg))
+		//}
 
 		for arn, tds := range tds {
 			for _, td := range tds {

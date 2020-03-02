@@ -36,11 +36,17 @@ With this application in place, the overall node shutdown process with Cluster A
 - On `Node` resource change -
 - Is the node exists?
   - No -> The node is already terminated. We have nothing to do no matter if it's properly detached from LBs or not. Exit this loop.
+- If not yet done, label the node with target group ARNs and optionally target ports, and/or CLBs
+  - For targets without port overrides, it uses the label `tg.node-detacher.variant.run/<target-group-arn>`
+  - For targets with port overrides, it uses the label `tg.node-detacher.variant.run/<target-group-arn>/<port number>`
+  - For CLBs, it uses the label `clb.node-detacher.variant.run/<load balancer name>`
 - Is the node is unschedulable?
   - No -> The node is not scheduled for termination. Exit this loop.
 - Is the node has condition `NodeDetatching` set to `True`?
   - Yes -> The node is already scheduled for detachment/deregistration. All we need is to hold on and wish the node to properly deregistered from LBs in time. Ecit the loop.
-- Deregister the node from all the target groups, CLBs and ASGs
+- Deregister the node from target groups or CLBs
+  - Deregister the node from the target group specified by `tg.node-detacher.variant.run/<target-group-arn>` label
+  - Call `DeregisterInstancesFromLoadBalancer` API for the loadbalancer specified by `clb.node-detacher.variant.run/<load balancer name>` label
 
 ## Recommended Usage
 
