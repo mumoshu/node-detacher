@@ -22,12 +22,24 @@ That's because they are prone to sudden failure of pods. When a pod is failed wh
 
 This is a stop-gap for Kubernetes' inability to "wait" for the traffic from ELB/ALB/NLB to stop before the node is finally scheduled for termination.
 
+### `node-detacher` with Cluster Autoscaler
+
 With this application in place, the overall node shutdown process with Cluster Autocaler or any other Kubernetes operator that involves terminating nodes would look like this:
 
-- Cluster Autoscaler starts draining the node (on scale down). `Node.Spec.Unschdulable` is set to `true`.
-- `node-detacher` detects the node become `Unschedulable`, so it tries to detach the node from corresponding ASGs ASAP.
+- Cluster Autoscaler starts draining the node (on scale down)
+  - It [adds a `ToBeDeletedByClusterAutoscaler` taint](https://github.com/kubernetes/autoscaler/blob/912d923484b826b6986046405d243f9083ceb764/cluster-autoscaler/utils/deletetaint/delete.go#L59-L62) to the node to tell the scheduler to stop scheduling new pods onto the node.
+- `node-detacher` detects the node become unschedulable, so it tries to detach the node from corresponding ASGs ASAP.
 - ELB(s) still gradually stop directing the traffic to the nodes. The backend Kubernetes service and pods will starst to receive less and less traffic.
 - ELB(s) stops directing traffic as the EC2 instances are detached. Application processes running inside pods can safely terminates
+
+### With `draino`
+
+- `node-problem-detector` marks a node as problematic.
+- `draino` makes the problematic node unschedulable by [setting `spec.Unschedulable` to `true`](https://github.com/planetlabs/draino/blob/a877e7f0852fc510e74f416bcce7e8569e213141/internal/kubernetes/drainer.go#L148-L162).
+- `node-detacher` detaches the node from corresponding load balancers.
+- Pods being evicted by `draino` gradually stops receiving traffic through the problematic node's NodePorts
+- Pod grace period passes and pods gets terminated.
+- The node gets terminated. As the pods are already terminated and the node is not receiving traffic from LBs, it incurs no downtime.
 
 ## Algorithm
 
@@ -41,6 +53,7 @@ With this application in place, the overall node shutdown process with Cluster A
   - For targets with port overrides, it uses the label `tg.node-detacher.variant.run/<target-group-arn>/<port number>`
   - For CLBs, it uses the label `clb.node-detacher.variant.run/<load balancer name>`
 - Is the node is unschedulable?
+  - i.e. Does it have a `ToBeDeletedByClusterAutoscaler` taint, or `node.spec.Unschedulable` set to `true`?
   - No -> The node is not scheduled for termination. Exit this loop.
 - Is the node has condition `NodeBeingDetached` set to `True`?
   - Yes -> The node is already scheduled for detachment/deregistration. All we need is to hold on and wish the node to properly deregistered from LBs in time. Ecit the loop.

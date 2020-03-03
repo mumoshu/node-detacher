@@ -150,7 +150,27 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		}
 	}
 
-	nodeIsSchedulable := !node.Spec.Unschedulable
+	var toBeDeletedByCA bool
+
+	for _, taint := range node.Spec.Taints {
+		// Cluster Autoscaler tries to make the node unschedulable by adding a taint whose key is
+		// `ToBeDeletedByClusterAutoscaler`.
+		//
+		// References:
+		//
+		// MarkToBeDeleted:
+		// https://github.com/kubernetes/autoscaler/blob/7ecf51e4bfab24b6d9c6520d8a851052e5a447fb/cluster-autoscaler/utils/deletetaint/delete.go#L59-L62
+		//
+		// ScaleDown.deleteNode:
+		// https://github.com/kubernetes/autoscaler/blob/af1dd84305d3c6bebd22373a7bcf7aebad5a91f5/cluster-autoscaler/core/scale_down.go#L1109-L1112
+		if taint.Key == "ToBeDeletedByClusterAutoscaler" {
+			toBeDeletedByCA = true
+
+			break
+		}
+	}
+
+	nodeIsSchedulable := !node.Spec.Unschedulable && !toBeDeletedByCA
 
 	if nodeBeingDetached {
 		log.Info("Node is already being detached", "node", node.Name)
