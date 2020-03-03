@@ -158,7 +158,7 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		if nodeIsSchedulable {
 			// Immediately start re-attaching the node to TGs and CLBs that the node is already de-registered from in the previous loop.
 			//
-			// Why? To interoperate with CA.
+			// Why? To interoperate with crashed cluster-autoscaler.
 			//
 			// The node with the "NodeDetaching" means we did start detaching the node in the previous loop.
 			// But the node being schedulable after that means that CA cancelled the scale-down.
@@ -167,7 +167,7 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			// More concretely, we should re-attach the node to corresponding TGs and CLBs because those are changes
 			// made by node-detacher.
 			//
-			// See StaticAutoscaler.cleanUpIfRequired for more information on how CA cancels a scale-down:
+			// See StaticAutoscaler.cleanUpIfRequired for more information on how CA cancels a scale-down after crash:
 			// https://github.com/kubernetes/autoscaler/blob/dbbd4572af2b666d32e582bf88c4239163706f8c/cluster-autoscaler/core/static_autoscaler.go#L170-L190
 			if err := r.nodes.attachNodes([]corev1.Node{node}); err != nil {
 				log.Error(err, "Failed to reattach nodes")
