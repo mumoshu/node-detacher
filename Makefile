@@ -97,6 +97,9 @@ image: gitstat
 push: gitstat image
 	docker push $(IMGTAG)
 
+latest: push
+	docker tag $(IMGTAG) $(IMAGE):latest
+
 ci: gitstat tag build fmt-check lint test vet image
 
 builder:
