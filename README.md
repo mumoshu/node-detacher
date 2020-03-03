@@ -8,10 +8,10 @@ This is generally useful when you expose your nodes via
 - ELBs managed by `type: LoadBalancer` services
 - `NodePort` and provisions ELBs outside of Kubernetes with e.g. Terraform or CloudFormation
 
-`node-detacher` avoids downtime after the EC2 instance is terminated and before ELB(s) finally stops sending traffic.
+In this case, `node-detacher` avoids downtime after the EC2 instance is terminated and before ELB(s) finally stops sending traffic.
 
-It is even more useful when you run any TCP server behind services whose `externalTrafficPolicy` is set to `Local`.
-In that case, `node-detacher` avoids downtime after all the pods on the node terminated and before ELB(s) finally stops sending traffic to the node.
+It is even more useful when you run any TCP server as DaemonSet behind services whose `externalTrafficPolicy` is set to `Local`.
+In this case, `node-detacher` avoids downtime after all the daemonset pods on the node terminated and before ELB(s) finally stops sending traffic to the node.
 
 > Why `externalTrafficPolicy: Local`?
 >
