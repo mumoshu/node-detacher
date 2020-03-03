@@ -2,16 +2,6 @@
 
 `node-detacher` is a Kubernetes controller that watches for unschedulable nodes and immediately detach them from the corresponding target groups and classical load balancers before they, and their pods, go offline.
 
-## FAQ
-
-> Why `externalTrafficPolicy: Local`?
->
-> It removes an extra hop between the node received the packet on NodePort, and the node that is running the backend pod.
-
-> Why not use `aws-alb-ingress-controller` with the `IP` target mode that directs the traffic to directory to the `aws-vpc-cni-k8s`-managed Pod/ENI IP?
->
-> That's because they are prone to sudden failure of pods. When a pod is failed while running, you need to wait for ELB until it finishes a few healthcecks and finally mark te pod IP unhealthy until the traffic stops flowing into the failed pod.
-
 ## Why `node-detacher`?
 
 This is a stop-gap for Kubernetes' inability to "wait" for the traffic from ELB/ALB/NLB to stop before the node is finally scheduled for termination.
@@ -26,6 +16,18 @@ In this case, `node-detacher` avoids short(but depends on the situation as AWS i
 
 It is even more useful when you run any TCP server as DaemonSet behind services whose `externalTrafficPolicy` is set to `Local`.
 In this case, `node-detacher` avoids downtime after all the daemonset pods on the node terminated and before ELB(s) finally stops sending traffic to the node.
+
+### FAQ
+
+Here's the set of common questions that may provide you better understanding of where `node-detacher` is helpful.
+
+> Why `externalTrafficPolicy: Local`?
+>
+> It removes an extra hop between the node received the packet on NodePort, and the node that is running the backend pod.
+
+> Why not use `aws-alb-ingress-controller` with the `IP` target mode that directs the traffic to directory to the `aws-vpc-cni-k8s`-managed Pod/ENI IP?
+>
+> That's because they are prone to sudden failure of pods. When a pod is failed while running, you need to wait for ELB until it finishes a few healthcecks and finally mark te pod IP unhealthy until the traffic stops flowing into the failed pod.
 
 ### With Cluster Autoscaler
 
