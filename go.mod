@@ -3,7 +3,7 @@ module github.com/mumoshu/node-detacher
 go 1.13
 
 require (
-	github.com/aws/aws-sdk-go v1.21.8
+	github.com/aws/aws-sdk-go v1.29.15
 	github.com/go-logr/logr v0.1.0
 	github.com/onsi/ginkgo v1.8.0
 	github.com/onsi/gomega v1.5.0
