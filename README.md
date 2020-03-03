@@ -2,6 +2,15 @@
 
 `node-detacher` is a Kubernetes controller that watches for unschedulable nodes and immediately detach them from the corresponding target groups and classical load balancers before they, and their pods, go offline.
 
+## Recommended Usage
+
+`node-detacher` complements famous and useful solutions listed below: 
+
+- Run [`aws-asg-roller`](https://github.com/deitch/aws-asg-roller) along with `node-detacher` in order to avoid potential downtime due to ELB not reacting to node termination fast enough
+- Run `cluster-autoscaler` along with `node-detacher` in order to avoid downtime on scale down
+- Run [`node-problem-detector`](https://github.com/kubernetes/node-problem-detector) to detect unhealthy nodes and [draino](https://github.com/planetlabs/draino) to automatically drain such nodes. Add `node-detacher` so that node termination triggered by `draino` doesn' result in downtime. See https://github.com/kubernetes/node-problem-detector#remedy-systems
+  - Optionally add more node-problem-detector rules by referencing [uswitch's prebuilt rules](https://github.com/uswitch/node-problem-detector)
+
 ## Why `node-detacher`?
 
 This is a stop-gap for Kubernetes' inability to "wait" for the traffic from ELB/ALB/NLB to stop before the node is finally scheduled for termination.
@@ -84,13 +93,6 @@ With this application in place, the overall node shutdown process with Cluster A
   - Deregister the node from the target group specified by `tg.node-detacher.variant.run/<target-group-arn>` label
   - Call `DeregisterInstancesFromLoadBalancer` API for the loadbalancer specified by `clb.node-detacher.variant.run/<load balancer name>` label
 - Set the node condition `NodeBeingDetached` to `True`, so that in the next loop we won't duplicate the work of de-registering the node
-
-## Recommended Usage
-
-- Run [`aws-asg-roller`](https://github.com/deitch/aws-asg-roller) along with `node-detacher` in order to avoid potential downtime due to ELB not reacting to node termination fast enough
-- Run `cluster-autoscaler` along with `node-detacher` in order to avoid downtime on scale down
-- Run [`node-problem-detector`](https://github.com/kubernetes/node-problem-detector) to detect unhealthy nodes and [draino](https://github.com/planetlabs/draino) to automatically drain such nodes. Add `node-detacher` so that node termination triggered by `draino` doesn' result in downtime. See https://github.com/kubernetes/node-problem-detector#remedy-systems
-  - Optionally add more node-problem-detector rules by referencing [uswitch's prebuilt rules](https://github.com/uswitch/node-problem-detector)
 
 ## Requirements
 
