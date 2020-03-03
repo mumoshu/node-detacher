@@ -171,6 +171,42 @@ func detachInstancesFromASGs(svc autoscalingiface.AutoScalingAPI, asgName string
 	return nil
 }
 
+func registerInstancesToCLBs(svc elbiface.ELBAPI, lbName string, instanceIDs []string) error {
+	instances := []*elb.Instance{}
+
+	for _, id := range instanceIDs {
+		instances = append(instances, &elb.Instance{
+			InstanceId: aws.String(id),
+		})
+	}
+
+	input := &elb.RegisterInstancesWithLoadBalancerInput{
+		Instances:        instances,
+		LoadBalancerName: aws.String(lbName),
+	}
+
+	// API Reference:
+	//
+	// https://docs.aws.amazon.com/elasticloadbalancing/2012-06-01/APIReference/API_RegisterInstancesWithLoadBalancer.html
+	_, err := svc.RegisterInstancesWithLoadBalancer(input)
+	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+
+			switch aerr.Code() {
+			case autoscaling.ErrCodeResourceContentionFault:
+				return fmt.Errorf("Could not register instances, any resource is in contention, will try in next loop")
+			default:
+				return fmt.Errorf("Unknown aws error when registering instances: %v", aerr.Error())
+			}
+		} else {
+			// Print the error, cast err to awserr.Error to get the Code and
+			// Message from an error.
+			return fmt.Errorf("Unknown non-aws error when registering instances: %v", err.Error())
+		}
+	}
+	return nil
+}
+
 func deregisterInstancesFromCLBs(svc elbiface.ELBAPI, lbName string, instanceIDs []string) error {
 	instances := []*elb.Instance{}
 
@@ -200,6 +236,51 @@ func deregisterInstancesFromCLBs(svc elbiface.ELBAPI, lbName string, instanceIDs
 			// Print the error, cast err to awserr.Error to get the Code and
 			// Message from an error.
 			return fmt.Errorf("Unknown non-aws error when deregistering instances: %v", err.Error())
+		}
+	}
+	return nil
+}
+
+func attachInstanceToTG(svc elbv2iface.ELBV2API, tgName string, instanceID string, portOpts ...string) error {
+	descs := []*elbv2.TargetDescription{}
+
+	var portNum *int64
+
+	if len(portOpts) > 0 {
+		portStr := portOpts[0]
+
+		p, err := strconv.Atoi(portStr)
+		if err != nil {
+			return fmt.Errorf("invalid port %q: %w", portStr, err)
+		}
+
+		portNum = aws.Int64(int64(p))
+	}
+
+	descs = append(descs, &elbv2.TargetDescription{
+		Id:   aws.String(instanceID),
+		Port: portNum,
+	})
+
+	input := &elbv2.RegisterTargetsInput{
+		TargetGroupArn: aws.String(tgName),
+		Targets:        descs,
+	}
+
+	// See https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_RegisterTargets.html for the API spec
+	if _, err := svc.RegisterTargets(input); err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+
+			switch aerr.Code() {
+			case autoscaling.ErrCodeResourceContentionFault:
+				return fmt.Errorf("Could not register targets, any resource is in contention, will try in next loop")
+			default:
+				return fmt.Errorf("Unknown aws error when registering targets: %v", aerr.Error())
+			}
+		} else {
+			// Print the error, cast err to awserr.Error to get the Code and
+			// Message from an error.
+			return fmt.Errorf("Unknown non-aws error when deregistering targets: %v", err.Error())
 		}
 	}
 	return nil

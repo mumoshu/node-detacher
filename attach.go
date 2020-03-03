@@ -8,22 +8,8 @@ import (
 	"strings"
 )
 
-const (
-	healthy = "Healthy"
-)
-
-// detachUnschedulables runs a set of EC2 instance detachments in the loop to update ASGs to not manage unschedulable K8s nodes
-func (n *Nodes) detachUnschedulables() error {
-	unschedulableNodes, err := n.k8sSvc.getUnschedulableNodes()
-	if err != nil {
-		return err
-	}
-
-	return n.detachNodes(unschedulableNodes)
-}
-
-func (n *Nodes) detachNodes(unschedulableNodes []corev1.Node) error {
-	for _, node := range unschedulableNodes {
+func (n *Nodes) attachNodes(nodes []corev1.Node) error {
+	for _, node := range nodes {
 		instanceId, err := getInstanceID(node)
 		if err != nil {
 			return err
@@ -31,11 +17,9 @@ func (n *Nodes) detachNodes(unschedulableNodes []corev1.Node) error {
 
 		labelUpdates := map[string]string{}
 
-		LabelValueDetached := "detached"
-
 		for k, v := range node.Labels {
 			ks := strings.Split("k", "/")
-			if len(ks) < 2 || !strings.Contains(k, NodeLabelPrefix) || k == KeyLabeled || v == LabelValueDetached {
+			if len(ks) < 2 || !strings.Contains(k, NodeLabelPrefix) || k == KeyLabeled || v != LabelValueDetached {
 				continue
 			}
 
@@ -44,12 +28,6 @@ func (n *Nodes) detachNodes(unschedulableNodes []corev1.Node) error {
 			domain := strings.Split(ks[0], ".")[0]
 
 			switch domain {
-			case "asg":
-				if err := detachInstancesFromASGs(n.asgSvc, id, []string{instanceId}); err != nil {
-					return err
-				}
-
-				labelUpdates[k] = LabelValueDetached
 			case "tg":
 				{
 					// Prevents alb-ingress-controller from re-registering the target
@@ -61,30 +39,29 @@ func (n *Nodes) detachNodes(unschedulableNodes []corev1.Node) error {
 					}
 
 					// See https://github.com/kubernetes-sigs/aws-alb-ingress-controller/blob/27e5d2a7dc8584123e3997a5dd3d80a58fa7bbd7/internal/ingress/annotations/class/main.go#L52
-					node.Labels["alpha.service-controller.kubernetes.io/exclude-balancer"] = "true"
+					delete(latest.Labels, "alpha.service-controller.kubernetes.io/exclude-balancer")
 
 					if err := n.client.Update(context.Background(), &latest); err != nil {
 						return err
 					}
 
-					// Note that we continue by de-registering the target on our own, instead of waiting for the
-					// alb-ingress-controller to do it for us in favor of "alpha.service-controller.kubernetes.io/exclude-balancer"
-					// just to start de-registering the target earlier.
+					// Note that we continue by registering the target on our own, instead of waiting for the
+					// alb-ingress-controller to do it for us in favor of the removal of "alpha.service-controller.kubernetes.io/exclude-balancer"
 				}
 
 				if len(ks) == 3 {
-					if err := deregisterInstanceFromTG(n.elbv2Svc, id, instanceId, ks[2]); err != nil {
+					if err := attachInstanceToTG(n.elbv2Svc, id, instanceId, ks[2]); err != nil {
 						return err
 					}
 				} else {
-					if err := deregisterInstancesFromTGs(n.elbv2Svc, id, []string{instanceId}); err != nil {
+					if err := attachInstanceToTG(n.elbv2Svc, id, instanceId); err != nil {
 						return err
 					}
 				}
 
-				labelUpdates[k] = LabelValueDetached
+				labelUpdates[k] = LabelValueAttached
 			case "clb":
-				if err := deregisterInstancesFromCLBs(n.elbSvc, id, []string{instanceId}); err != nil {
+				if err := registerInstancesToCLBs(n.elbSvc, id, []string{instanceId}); err != nil {
 					return err
 				}
 			default:
@@ -100,7 +77,7 @@ func (n *Nodes) detachNodes(unschedulableNodes []corev1.Node) error {
 			}
 
 			for k, v := range labelUpdates {
-				node.Labels[k] = v
+				latest.Labels[k] = v
 			}
 
 			if err := n.client.Update(context.Background(), &latest); err != nil {
