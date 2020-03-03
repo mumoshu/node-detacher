@@ -13,25 +13,11 @@ In this case, `node-detacher` avoids short(but depends on the situation as AWS i
 It is even more useful when you run any TCP server as DaemonSet behind services whose `externalTrafficPolicy` is set to `Local`.
 In this case, `node-detacher` avoids downtime after all the daemonset pods on the node terminated and before ELB(s) finally stops sending traffic to the node.
 
+## FAQ
+
 > Why `externalTrafficPolicy: Local`?
 >
 > It removes an extra hop between the node received the packet on NodePort, and the node that is running the backend pod.
-
-### With `type: LoadBalancer`
-
-`node-detacher` allows you to gracefully terminate your nodes without down time due to that `cluster-autoscaler` and `draino` and other Kubernetes controllers and operators are doesn't interoprate with ELBs which is necessary for `externalTrafficPolicy: Local` services.
-
-### With `NodePort`
-
-`node-detacher` allows you to gracefully terminate your nodes without down time due to that `cluster-autoscaler` and `draino` and other Kubernetes controllers and operators are doesn't interoprate with ELBs which is necessary for `externalTrafficPolicy: Local` services.
-
-> Why prefer `NodePort` over `LoadBalancer` type services in the first place?
->
-> `NodePort` allows you to:
->
-> - Avoid recreating ELB/ALB/NLB when you recreate the Kubernetes cluster
->   - There's no need to pre-warn your ELB before switching huge production traffic from the old to the new cluster anymore.
->   - There's no need to wait for DNS to propagate changes in your endpoint that directs the traffic to the LB anymore.
 
 > Why not use `aws-alb-ingress-controller` with the `IP` target mode that directs the traffic to directory to the `aws-vpc-cni-k8s`-managed Pod/ENI IP?
 >
@@ -41,7 +27,7 @@ In this case, `node-detacher` avoids downtime after all the daemonset pods on th
 
 This is a stop-gap for Kubernetes' inability to "wait" for the traffic from ELB/ALB/NLB to stop before the node is finally scheduled for termination.
 
-### `node-detacher` with Cluster Autoscaler
+### With Cluster Autoscaler
 
 With this application in place, the overall node shutdown process with Cluster Autocaler or any other Kubernetes operator that involves terminating nodes would look like this:
 
@@ -59,6 +45,22 @@ With this application in place, the overall node shutdown process with Cluster A
 - Pods being evicted by `draino` gradually stops receiving traffic through the problematic node's NodePorts
 - Pod grace period passes and pods gets terminated.
 - The node gets terminated. As the pods are already terminated and the node is not receiving traffic from LBs, it incurs no downtime.
+
+### With `type: LoadBalancer` services
+
+`node-detacher` allows you to gracefully terminate your nodes without down time due to that `cluster-autoscaler` and `draino` and other Kubernetes controllers and operators are doesn't interoprate with ELBs which is necessary for `externalTrafficPolicy: Local` services.
+
+### With `type: NodePort` services
+
+`node-detacher` allows you to gracefully terminate your nodes without down time due to that `cluster-autoscaler` and `draino` and other Kubernetes controllers and operators are doesn't interoprate with ELBs which is necessary for `externalTrafficPolicy: Local` services.
+
+> Why prefer `NodePort` over `LoadBalancer` type services in the first place?
+>
+> `NodePort` allows you to:
+>
+> - Avoid recreating ELB/ALB/NLB when you recreate the Kubernetes cluster
+>   - There's no need to pre-warn your ELB before switching huge production traffic from the old to the new cluster anymore.
+>   - There's no need to wait for DNS to propagate changes in your endpoint that directs the traffic to the LB anymore.
 
 ## Algorithm
 
