@@ -2,17 +2,6 @@
 
 `node-detacher` is a Kubernetes controller that watches for unschedulable nodes and immediately detach them from the corresponding target groups and classical load balancers before they, and their pods, go offline.
 
-This is generally useful when you expose your nodes via
-
-- ALBs managed by `aws-alb-ingress-controller`
-- ELBs managed by `type: LoadBalancer` services
-- `NodePort` and provisions ELBs outside of Kubernetes with e.g. Terraform or CloudFormation
-
-In this case, `node-detacher` avoids short(but depends on the situation as AWS is eventual consistent :) ) downtime after the EC2 instance is terminated and before ELB(s) finally stops sending traffic.
-
-It is even more useful when you run any TCP server as DaemonSet behind services whose `externalTrafficPolicy` is set to `Local`.
-In this case, `node-detacher` avoids downtime after all the daemonset pods on the node terminated and before ELB(s) finally stops sending traffic to the node.
-
 ## FAQ
 
 > Why `externalTrafficPolicy: Local`?
@@ -26,6 +15,17 @@ In this case, `node-detacher` avoids downtime after all the daemonset pods on th
 ## Why `node-detacher`?
 
 This is a stop-gap for Kubernetes' inability to "wait" for the traffic from ELB/ALB/NLB to stop before the node is finally scheduled for termination.
+
+It is generally useful when you expose your nodes via
+
+- ALBs managed by `aws-alb-ingress-controller`
+- ELBs managed by `type: LoadBalancer` services
+- `NodePort` and provisions ELBs outside of Kubernetes with e.g. Terraform or CloudFormation
+
+In this case, `node-detacher` avoids short(but depends on the situation as AWS is eventual consistent :) ) downtime after the EC2 instance is terminated and before ELB(s) finally stops sending traffic.
+
+It is even more useful when you run any TCP server as DaemonSet behind services whose `externalTrafficPolicy` is set to `Local`.
+In this case, `node-detacher` avoids downtime after all the daemonset pods on the node terminated and before ELB(s) finally stops sending traffic to the node.
 
 ### With Cluster Autoscaler
 
