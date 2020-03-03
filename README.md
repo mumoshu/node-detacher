@@ -1,16 +1,17 @@
 # node-detacher
 
-`node-detacher` is a Kubernetes controller that watches for `Unschedulable` nodes and immediately detach them from the corresponding `AutoScaling Groups` before they, and their pods, go offline.
+`node-detacher` is a Kubernetes controller that watches for unschedulable nodes and immediately detach them from the corresponding target groups and classical load balancers before they, and their pods, go offline.
 
-This is generally useful when:
+This is generally useful when you expose your nodes via
 
-- You expose your nodes via ALBs managed by `aws-alb-ingress-controller`
-- You expose your nodes via ELBs managed by `type: LoadBalancer` services
-- You expose your nodes via `NodePort` and provisions ELBs outside of Kubernetes with e.g. Terraform or CloudFormation
+- ALBs managed by `aws-alb-ingress-controller`
+- ELBs managed by `type: LoadBalancer` services
+- `NodePort` and provisions ELBs outside of Kubernetes with e.g. Terraform or CloudFormation
 
-and
+`node-detacher` avoids downtime after the EC2 instance is terminated and before ELB(s) finally stops sending traffic.
 
-- You runs any TCP server behind services whose `externalTrafficPolicy` is set to `Local`
+It is even more useful when you run any TCP server behind services whose `externalTrafficPolicy` is set to `Local`.
+In that case, `node-detacher` avoids downtime after all the pods on the node terminated and before ELB(s) finally stops sending traffic to the node.
 
 > Why `externalTrafficPolicy: Local`?
 >
