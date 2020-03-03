@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/aws/aws-sdk-go/service/autoscaling/autoscalingiface"
 	"github.com/aws/aws-sdk-go/service/elb/elbiface"
+	"github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/aws/aws-sdk-go/service/elbv2/elbv2iface"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -16,10 +17,10 @@ const (
 	NodeLabelPrefix = "node-detacher.variant.run"
 )
 
-var KeyLabeled string
+var NodeKeyLabeled string
 
 func init() {
-	KeyLabeled = fmt.Sprintf("%s/labeled", NodeLabelPrefix)
+	NodeKeyLabeled = fmt.Sprintf("%s/labeled", NodeLabelPrefix)
 }
 
 type Nodes struct {
@@ -29,7 +30,13 @@ type Nodes struct {
 	asgSvc   autoscalingiface.AutoScalingAPI
 	elbSvc   elbiface.ELBAPI
 	elbv2Svc elbv2iface.ELBV2API
-	k8sSvc   KubernetesService
+
+	shouldHandleCLBs bool
+	shouldHandleTGs  bool
+}
+
+func (n *Nodes) Labeled(node corev1.Node) bool {
+	return node.Labels[NodeKeyLabeled] == "true"
 }
 
 func (n *Nodes) labelAllNodes() error {
@@ -50,7 +57,7 @@ func (n *Nodes) labelNodes(nodes []corev1.Node) error {
 	var instanceIDs []string
 
 	for _, node := range nodes {
-		if node.Labels[KeyLabeled] == "true" {
+		if node.Labels[NodeKeyLabeled] == "true" {
 			continue
 		}
 
@@ -65,7 +72,7 @@ func (n *Nodes) labelNodes(nodes []corev1.Node) error {
 	}
 
 	if len(instanceIDs) == 0 {
-		n.Log.Info(fmt.Sprintf("%d instances has been already labeled with %q", len(nodes), KeyLabeled))
+		n.Log.Info(fmt.Sprintf("%d instances has been already labeled with %q", len(nodes), NodeKeyLabeled))
 
 		return nil
 	}
@@ -75,21 +82,34 @@ func (n *Nodes) labelNodes(nodes []corev1.Node) error {
 	//	return err
 	//}
 
-	instanceToCLBs, err := getIdToCLBs(n.elbSvc, instanceIDs)
-	if err != nil {
-		return err
+	var instanceToCLBs map[string][]string
+
+	if n.shouldHandleCLBs {
+		var err error
+
+		instanceToCLBs, err = getIdToCLBs(n.elbSvc, instanceIDs)
+
+		if err != nil {
+			return err
+		}
 	}
 
-	_, instancToTDs, err := getIdToTGs(n.elbv2Svc, instanceIDs)
-	if err != nil {
-		return err
+	var instanceToTDs map[string]map[string][]elbv2.TargetDescription
+
+	if n.shouldHandleTGs {
+		var err error
+
+		_, instanceToTDs, err = getIdToTGs(n.elbv2Svc, instanceIDs)
+		if err != nil {
+			return err
+		}
 	}
 
 	for _, node := range nodes {
 		instance := nodeToInstance[node.Name]
 		//asgs := instanceToASGs[instance]
 		clbs := instanceToCLBs[instance]
-		tds := instancToTDs[instance]
+		tds := instanceToTDs[instance]
 
 		var latest corev1.Node
 
@@ -123,7 +143,7 @@ func (n *Nodes) labelNodes(nodes []corev1.Node) error {
 			tryset(fmt.Sprintf("clb.%s/%s", NodeLabelPrefix, clb))
 		}
 
-		latest.Labels[KeyLabeled] = "true"
+		latest.Labels[NodeKeyLabeled] = "true"
 
 		if err := n.client.Update(ctx, &latest); err != nil {
 			return err

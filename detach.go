@@ -15,14 +15,9 @@ const (
 	healthy = "Healthy"
 )
 
-// detachUnschedulables runs a set of EC2 instance detachments in the loop to update ASGs to not manage unschedulable K8s nodes
-func (n *Nodes) detachUnschedulables() error {
-	unschedulableNodes, err := n.k8sSvc.getUnschedulableNodes()
-	if err != nil {
-		return err
-	}
-
-	return n.detachNodes(unschedulableNodes)
+// deprecatedDetachUnschedulables runs a set of EC2 instance detachments in the loop to update ASGs to not manage unschedulable K8s nodes
+func (n *Nodes) deprecatedDetachUnschedulables() error {
+	return nil
 }
 
 func (n *Nodes) detachNodes(unschedulableNodes []corev1.Node) error {
@@ -36,7 +31,7 @@ func (n *Nodes) detachNodes(unschedulableNodes []corev1.Node) error {
 
 		for k, v := range node.Labels {
 			ks := strings.Split("k", "/")
-			if len(ks) < 2 || !strings.Contains(k, NodeLabelPrefix) || k == KeyLabeled || v == LabelValueDetached {
+			if len(ks) < 2 || !strings.Contains(k, NodeLabelPrefix) || k == NodeKeyLabeled || v == LabelValueDetached {
 				continue
 			}
 

@@ -36,17 +36,18 @@ With this application in place, the overall node shutdown process with Cluster A
 - On `Node` resource change -
 - Is the node exists?
   - No -> The node is already terminated. We have nothing to do no matter if it's properly detached from LBs or not. Exit this loop.
-- If not yet done, label the node with target group ARNs and optionally target ports, and/or CLBs
+- (Only in the static mode) If not yet done, label the node with target group ARNs and optionally target ports, and/or CLBs
   - For targets without port overrides, it uses the label `tg.node-detacher.variant.run/<target-group-arn>`
   - For targets with port overrides, it uses the label `tg.node-detacher.variant.run/<target-group-arn>/<port number>`
   - For CLBs, it uses the label `clb.node-detacher.variant.run/<load balancer name>`
 - Is the node is unschedulable?
   - No -> The node is not scheduled for termination. Exit this loop.
-- Is the node has condition `NodeDetatching` set to `True`?
+- Is the node has condition `NodeBeingDetached` set to `True`?
   - Yes -> The node is already scheduled for detachment/deregistration. All we need is to hold on and wish the node to properly deregistered from LBs in time. Ecit the loop.
 - Deregister the node from target groups or CLBs
   - Deregister the node from the target group specified by `tg.node-detacher.variant.run/<target-group-arn>` label
   - Call `DeregisterInstancesFromLoadBalancer` API for the loadbalancer specified by `clb.node-detacher.variant.run/<load balancer name>` label
+- Set the node condition `NodeBeingDetached` to `True`, so that in the next loop we won't duplicate the work of de-registering the node
 
 ## Recommended Usage
 
@@ -184,10 +185,20 @@ spec:
 
 `node-detacher` takes its configuration via command-line flags:
 
-```hcl
+```console
 Usage of node-detacher:
+  -enable-alb-ingress-integration
+    	Enable aws-alb-ingress-controller integration (default true)
+  -enable-dynamic-clb-integration type: LoadBalancer
+    	Enable integration with classical load balancers (a.k.a ELB v1) managed by type: LoadBalancer services (default true)
+  -enable-dynamic-nlb-integration type: LoadBalancer
+    	Enable integration with network load balancers (a.k.a ELB v2 NLB) managed by type: LoadBalancer services (default true)
   -enable-leader-election
     	Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.
+  -enable-static-clb-integration
+    	Enable integration with classical load balancers (a.k.a ELB v1) managed externally to Kubernetes, e.g. by Terraform or CloudFormation (default true)
+  -enable-static-tg-integration
+    	Enable integration with application load balancers and network load balancers (a.k.a ELB v2 ALBs and NLBs) managed externally to Kubernetes, e.g. by Terraform or CloudFormation (default true)
   -kubeconfig string
     	Paths to a kubeconfig. Only required if out-of-cluster.
   -master --kubeconfig

@@ -19,7 +19,7 @@ func (n *Nodes) attachNodes(nodes []corev1.Node) error {
 
 		for k, v := range node.Labels {
 			ks := strings.Split("k", "/")
-			if len(ks) < 2 || !strings.Contains(k, NodeLabelPrefix) || k == KeyLabeled || v != LabelValueDetached {
+			if len(ks) < 2 || !strings.Contains(k, NodeLabelPrefix) || k == NodeKeyLabeled || v != LabelValueDetached {
 				continue
 			}
 

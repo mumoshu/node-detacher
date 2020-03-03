@@ -41,7 +41,7 @@ func SetupTest(ctx context.Context) *corev1.Namespace {
 			Client:   mgr.GetClient(),
 			Scheme:   k8sscheme.Scheme,
 			Log:      logf.Log,
-			Recorder: mgr.GetEventRecorderFor("node-detacher"),
+			recorder: mgr.GetEventRecorderFor("node-detacher"),
 		}
 		err = controller.SetupWithManager(mgr)
 		Expect(err).NotTo(HaveOccurred(), "failed to setup controller")

@@ -44,12 +44,32 @@ func main() {
 		syncPeriod           time.Duration
 		metricsAddr          string
 		enableLeaderElection bool
+
+		albIngress  bool
+		dynamicCLBs bool
+		dynamicNLBs bool
+		staticCLBs  bool
+		staticTGs   bool
 	)
 
 	flag.DurationVar(&syncPeriod, "sync-period", 10*time.Second, "The period in seconds between each forceful iteration over all the nodes")
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
+	flag.BoolVar(&albIngress, "enable-alb-ingress-integration", true,
+		"Enable aws-alb-ingress-controller integration",
+	)
+	flag.BoolVar(&dynamicCLBs, "enable-dynamic-clb-integration", true,
+		"Enable integration with classical load balancers (a.k.a ELB v1) managed by `type: LoadBalancer` services",
+	)
+	flag.BoolVar(&dynamicNLBs, "enable-dynamic-nlb-integration", true,
+		"Enable integration with network load balancers (a.k.a ELB v2 NLB) managed by `type: LoadBalancer` services",
+	)
+	flag.BoolVar(&staticCLBs, "enable-static-clb-integration", true,
+		"Enable integration with classical load balancers (a.k.a ELB v1) managed externally to Kubernetes, e.g. by Terraform or CloudFormation",
+	)
+	flag.BoolVar(&staticTGs, "enable-static-tg-integration", true,
+		"Enable integration with application load balancers and network load balancers (a.k.a ELB v2 ALBs and NLBs) managed externally to Kubernetes, e.g. by Terraform or CloudFormation")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(func(o *zap.Options) {
@@ -76,19 +96,17 @@ func main() {
 	}
 
 	nodeReconciler := &NodeReconciler{
-		Client: mgr.GetClient(),
-		Log:    ctrl.Log.WithName("controllers").WithName("Runner"),
-		Scheme: mgr.GetScheme(),
-		nodes: &Nodes{
-			Log:      ctrl.Log.WithName("models").WithName("Nodes"),
-			client:   mgr.GetClient(),
-			asgSvc:   asgSvc,
-			elbSvc:   elbSvc,
-			elbv2Svc: elbv2Svc,
-		},
-		detachingNodes:        map[string]map[string]bool{},
-		deregisteringNodes:    map[string]map[string]bool{},
-		deregisteringNodesCLB: map[string]map[string]bool{},
+		Client:                              mgr.GetClient(),
+		Log:                                 ctrl.Log.WithName("controllers").WithName("Runner"),
+		Scheme:                              mgr.GetScheme(),
+		ALBIngressIntegrationEnabled:        albIngress,
+		DynamicNLBIntegrationEnabled:        dynamicNLBs,
+		DynamicCLBIntegrationEnabled:        dynamicCLBs,
+		StaticTargetGroupIntegrationEnabled: staticTGs,
+		StaticCLBIntegrationEnabled:         staticCLBs,
+		asgSvc:                              asgSvc,
+		elbSvc:                              elbSvc,
+		elbv2Svc:                            elbv2Svc,
 	}
 
 	if err = nodeReconciler.SetupWithManager(mgr); err != nil {

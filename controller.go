@@ -18,6 +18,9 @@ package main
 
 import (
 	"context"
+	"github.com/aws/aws-sdk-go/service/autoscaling/autoscalingiface"
+	"github.com/aws/aws-sdk-go/service/elb/elbiface"
+	"github.com/aws/aws-sdk-go/service/elbv2/elbv2iface"
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -28,18 +31,69 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
+const (
+	NodeConditionTypeNodeBeingDetached = corev1.NodeConditionType("NodeBeingDetached")
+	NodeEventReasonNodeBeingDetached   = "NodeBeingDetached"
+)
+
 // NodeReconciler reconciles a Node object
 type NodeReconciler struct {
 	client.Client
-	Log                   logr.Logger
-	Recorder              record.EventRecorder
-	Scheme                *runtime.Scheme
-	nodes                 *Nodes
-	detachingNodes        map[string]map[string]bool
-	deregisteringNodes    map[string]map[string]bool
-	deregisteringNodesCLB map[string]map[string]bool
+	Log      logr.Logger
+	recorder record.EventRecorder
+	Scheme   *runtime.Scheme
+	nodes    *Nodes
+
+	// ALBIngressIntegrationEnabled is set to true when node-detacher should interoperate with
+	// aws-alb-ingress-controller(https://github.com/kubernetes-sigs/aws-alb-ingress-controller)
+	//
+	// When enabled, node-detacher behaves as follows:
+	// - Stop labeling all nodes on startup because the desired node-to-targetgroup relationship can't be determined
+	//   until the node becomes Unschedulable.
+	// - Stop labeling the node on creation due to the same reason as the above
+	ALBIngressIntegrationEnabled bool
+
+	// DynamicNLBIntegrationEnabled is set to true when node-detacher should interoperate with
+	// NLBs managed via `type: LoadBalancer` services
+	DynamicNLBIntegrationEnabled bool
+
+	// DynamicCLBIntegrationEnabled is set to true when node-detacher should interoperate with
+	// CLBs managed via `type: LoadBalancer` services
+	DynamicCLBIntegrationEnabled bool
+
+	// StaticTargetGroupIntegrationEnabled is set to true when node-detacher should interoperate with
+	// target groups managed externally to Kubernetes (e.g. via Terraform or CloudFormation)
+	StaticTargetGroupIntegrationEnabled bool
+
+	// StaticCLBIntegrationEnabled is set to true when node-detacher should interoperate with
+	// CLBs managed externally to Kubernetes (e.g. via Terraform or CloudFormation)
+	StaticCLBIntegrationEnabled bool
+
+	asgSvc   autoscalingiface.AutoScalingAPI
+	elbSvc   elbiface.ELBAPI
+	elbv2Svc elbv2iface.ELBV2API
 
 	synced bool
+}
+
+// staticMode returns true when node-detacher's static mode is enabled.
+//
+// In static mode, node-to-clb and/or node-to-targetgroup relationship is static and can be known at the time of the
+// node being created.
+func (r *NodeReconciler) staticMode() bool {
+	return !r.dynamicMode()
+}
+
+func (r *NodeReconciler) dynamicMode() bool {
+	return r.ALBIngressIntegrationEnabled || r.DynamicNLBIntegrationEnabled || r.DynamicCLBIntegrationEnabled
+}
+
+func (r *NodeReconciler) shouldHandleTargetGroups() bool {
+	return r.StaticCLBIntegrationEnabled || r.ALBIngressIntegrationEnabled || r.DynamicNLBIntegrationEnabled
+}
+
+func (r *NodeReconciler) shouldHandleCLBs() bool {
+	return r.StaticCLBIntegrationEnabled || r.DynamicCLBIntegrationEnabled
 }
 
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch;create;update;patch
@@ -48,7 +102,21 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
 	log := r.Log.WithValues("node", req.NamespacedName)
 
-	if !r.synced {
+	if r.nodes == nil {
+		r.nodes = &Nodes{
+			Log:              ctrl.Log.WithName("models").WithName("Nodes"),
+			client:           r.Client,
+			asgSvc:           r.asgSvc,
+			elbSvc:           r.elbSvc,
+			elbv2Svc:         r.elbv2Svc,
+			shouldHandleCLBs: r.shouldHandleCLBs(),
+			shouldHandleTGs:  r.shouldHandleTargetGroups(),
+		}
+	}
+
+	if !r.synced && r.staticMode() {
+		log.Info("Labeling all nodes on startup")
+
 		if err := r.nodes.labelAllNodes(); err != nil {
 			log.Error(err, "Unable to label all nodes")
 		}
@@ -64,13 +132,19 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	NodeDetatching := corev1.NodeConditionType("NodeDetatching")
+	if r.staticMode() && !r.nodes.Labeled(node) {
+		log.Info("Labeling node on init", "node", node.Name)
 
-	var nodeIsDetaching bool
+		if err := r.nodes.labelNodes([]corev1.Node{node}); err != nil {
+			log.Error(err, "Unable to label node")
+		}
+	}
+
+	var nodeBeingDetached bool
 
 	for _, cond := range node.Status.Conditions {
-		if cond.Type == NodeDetatching && cond.Status == corev1.ConditionTrue {
-			nodeIsDetaching = true
+		if cond.Type == NodeConditionTypeNodeBeingDetached && cond.Status == corev1.ConditionTrue {
+			nodeBeingDetached = true
 
 			break
 		}
@@ -78,7 +152,9 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	nodeIsSchedulable := !node.Spec.Unschedulable
 
-	if nodeIsDetaching {
+	if nodeBeingDetached {
+		log.Info("Node is already being detached", "node", node.Name)
+
 		if nodeIsSchedulable {
 			// Immediately start re-attaching the node to TGs and CLBs that the node is already de-registered from in the previous loop.
 			//
@@ -102,15 +178,17 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			updated := node.DeepCopy()
 
 			updated.Status.Conditions = append(updated.Status.Conditions, corev1.NodeCondition{
-				Type:   NodeDetatching,
+				Type:   NodeConditionTypeNodeBeingDetached,
 				Status: corev1.ConditionFalse,
 			})
 
 			if err := r.Update(ctx, updated); err != nil {
+				log.Error(err, "Failed to update node condition", "node", updated.Name)
+
 				return ctrl.Result{}, client.IgnoreNotFound(err)
 			}
 
-			r.Recorder.Event(&node, corev1.EventTypeNormal, "NodeDetatching", "Successfully stopped detaching and started re-attaching node")
+			r.recorder.Event(&node, corev1.EventTypeNormal, "NodeDetatching", "Successfully stopped detaching and started re-attaching node")
 			log.Info("Started re-attaching node", "node", node.Name)
 		}
 
@@ -125,6 +203,14 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, nil
 	}
 
+	if r.dynamicMode() {
+		log.Info("Labeling node on detach", "node", node.Name)
+
+		if err := r.nodes.labelNodes([]corev1.Node{node}); err != nil {
+			log.Error(err, "Unable to label node")
+		}
+	}
+
 	updated := node.DeepCopy()
 
 	if err := r.nodes.detachNodes(
@@ -136,7 +222,7 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	}
 
 	updated.Status.Conditions = append(updated.Status.Conditions, corev1.NodeCondition{
-		Type:   NodeDetatching,
+		Type:   NodeConditionTypeNodeBeingDetached,
 		Status: corev1.ConditionTrue,
 	})
 
@@ -144,14 +230,14 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	r.Recorder.Event(&node, corev1.EventTypeNormal, "NodeDetatching", "Successfully started detaching node")
+	r.recorder.Event(&node, corev1.EventTypeNormal, NodeEventReasonNodeBeingDetached, "Successfully started detaching node")
 	log.Info("Started detaching node", "node", node.Name)
 
 	return ctrl.Result{}, nil
 }
 
 func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.Recorder = mgr.GetEventRecorderFor("node-detacher")
+	r.recorder = mgr.GetEventRecorderFor("node-detacher")
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Node{}).
