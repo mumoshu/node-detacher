@@ -2,21 +2,39 @@
 
 `node-detacher` is a Kubernetes controller that watches for `Unschedulable` nodes and immediately detach them from the corresponding `AutoScaling Groups` before they, and their pods, go offline.
 
-This is generally useful when you expose your nodes via `NodePort` and provisions ELBs outside of Kubernetes with e.g. Terraform or CloudFormation.
+This is generally useful when:
 
-## Why NodePort?
+- You expose your nodes via ALBs managed by `aws-alb-ingress-controller`
+- You expose your nodes via ELBs managed by `type: LoadBalancer` services
+- You expose your nodes via `NodePort` and provisions ELBs outside of Kubernetes with e.g. Terraform or CloudFormation
 
-Why prefer `NodePort` over `LoadBalancer` type services in the first place?
+and
 
-`NodePort` allows you to:
+- You runs any TCP server behind services whose `externalTrafficPolicy` is set to `Local`
 
-- Avoid recreating ELB/ALB/NLB when you recreate the Kubernetes cluster
-  - There's no need to pre-warn your ELB before switching huge production traffic from the old to the new cluster anymore.
-  - There's no need to wait for DNS to propagate changes in your endpoint that directs the traffic to the LB anymore.
+> Why `externalTrafficPolicy: Local`?
+>
+> It removes an extra hop between the node received the packet on NodePort, and the node that is running the backend pod.
 
-Why not use `aws-alb-ingress-controller` with the `IP` target mode that directs the traffic to directory to the `aws-vpc-cni-k8s`-managed Pod/ENI IP?
+### With `type: LoadBalancer`
 
-That's because they are prone to sudden failure of pods. When a pod is failed while running, you need to wait for ELB until it finishes a few healthcecks and finally mark te pod IP unhealthy until the traffic stops flowing into the failed pod.
+`node-detacher` allows you to gracefully terminate your nodes without down time due to that `cluster-autoscaler` and `draino` and other Kubernetes controllers and operators are doesn't interoprate with ELBs which is necessary for `externalTrafficPolicy: Local` services.
+
+### With `NodePort`
+
+`node-detacher` allows you to gracefully terminate your nodes without down time due to that `cluster-autoscaler` and `draino` and other Kubernetes controllers and operators are doesn't interoprate with ELBs which is necessary for `externalTrafficPolicy: Local` services.
+
+> Why prefer `NodePort` over `LoadBalancer` type services in the first place?
+>
+> `NodePort` allows you to:
+>
+> - Avoid recreating ELB/ALB/NLB when you recreate the Kubernetes cluster
+>   - There's no need to pre-warn your ELB before switching huge production traffic from the old to the new cluster anymore.
+>   - There's no need to wait for DNS to propagate changes in your endpoint that directs the traffic to the LB anymore.
+
+> Why not use `aws-alb-ingress-controller` with the `IP` target mode that directs the traffic to directory to the `aws-vpc-cni-k8s`-managed Pod/ENI IP?
+>
+> That's because they are prone to sudden failure of pods. When a pod is failed while running, you need to wait for ELB until it finishes a few healthcecks and finally mark te pod IP unhealthy until the traffic stops flowing into the failed pod.
 
 ## Why `node-detacher`?
 
