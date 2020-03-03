@@ -28,10 +28,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-const (
-	containerName = "runner"
-)
-
 // NodeReconciler reconciles a Node object
 type NodeReconciler struct {
 	client.Client
