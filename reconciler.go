@@ -22,10 +22,13 @@ import (
 	"github.com/aws/aws-sdk-go/service/elb/elbiface"
 	"github.com/aws/aws-sdk-go/service/elbv2/elbv2iface"
 	"github.com/go-logr/logr"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -69,6 +72,22 @@ type NodeReconciler struct {
 	// CLBs managed externally to Kubernetes (e.g. via Terraform or CloudFormation)
 	StaticCLBIntegrationEnabled bool
 
+	// DaemonSets is the list of daemonsets whose item is either "NAME" or "NAMESPACE/NAME" of the target daemonset.
+	//
+	// For example, let's say you'd like node-detacher deployed in kube-system to detach the node which is running the target
+	// pod and when the pod becomes `Terminating` state.
+	//
+	// When the pod is named `contour-<hash>` and it is managed by the daemonset named `contour` in namespace
+	// `kube-system`, you'd specifyc the daemonsets list as:
+	//
+	//  --daemonsets contour`
+	//
+	// If you'd like to deploy `contour` in another namespace that is different from where `node-detacher` is deployed
+	// to - e.g. `ingress` namespace - you'd specify the list as:
+	//
+	// --daemonsets ingress/contour
+	DaemonSets []string
+
 	asgSvc   autoscalingiface.AutoScalingAPI
 	elbSvc   elbiface.ELBAPI
 	elbv2Svc elbv2iface.ELBV2API
@@ -96,10 +115,71 @@ func (r *NodeReconciler) shouldHandleCLBs() bool {
 	return r.StaticCLBIntegrationEnabled || r.DynamicCLBIntegrationEnabled
 }
 
+func (r *NodeReconciler) configuredForDaemonSets() bool {
+	return len(r.DaemonSets) > 0
+}
+
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch;create;update;patch
 
 func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
+
+	if r.configuredForDaemonSets() {
+		log := r.Log.WithValues("pod", req.NamespacedName)
+
+		namespaces := map[string]bool{}
+
+		daemonsetNames := map[string]bool{}
+
+		for _, ds := range r.DaemonSets {
+			nsName := strings.Split(ds, "/")
+
+			if len(nsName) > 1 {
+				namespaces[nsName[0]] = true
+				daemonsetNames[nsName[1]] = true
+			} else {
+				daemonsetNames[nsName[0]] = true
+			}
+		}
+
+		_, nsTargeted := namespaces[req.Namespace]
+		if !nsTargeted {
+			log.Info("Skipping this pod. Only pods in one of target namespaces are reconciled by me.")
+
+			return ctrl.Result{}, nil
+		}
+
+		var latestPod corev1.Pod
+
+		if err := r.Client.Get(ctx, req.NamespacedName, &latestPod); err != nil {
+			log.Error(err, "Failed getting pod owner")
+
+			return ctrl.Result{}, err
+		}
+
+		owner := metav1.GetControllerOf(&latestPod)
+
+		if owner.Kind != "DaemonSet" {
+			log.Info("Skipping this pod. Only daemonset pods are reconciled by me", "kind", owner.Kind)
+
+			return ctrl.Result{}, nil
+		}
+
+		_, ownerTargeted := daemonsetNames[owner.Name]
+
+		if !ownerTargeted {
+			log.Info("Skipping this pod. Only pods that are managed by one of target daemonsets are reconciled by me", "owner", owner.Name)
+
+			return ctrl.Result{}, nil
+		}
+
+		// Continue by reconciling the node on which the pod is running
+		req.NamespacedName = types.NamespacedName{
+			Namespace: "",
+			Name:      latestPod.Spec.NodeName,
+		}
+	}
+
 	log := r.Log.WithValues("node", req.NamespacedName)
 
 	if r.nodes == nil {
@@ -258,6 +338,16 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.recorder = mgr.GetEventRecorderFor("node-detacher")
+
+	if r.configuredForDaemonSets() {
+		err := ctrl.NewControllerManagedBy(mgr).
+			For(&corev1.Pod{}).
+			Complete(r)
+
+		if err != nil {
+			return err
+		}
+	}
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Node{}).

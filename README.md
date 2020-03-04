@@ -10,6 +10,7 @@
 - Run `cluster-autoscaler` along with `node-detacher` in order to avoid downtime on scale down
 - Run [`node-problem-detector`](https://github.com/kubernetes/node-problem-detector) to detect unhealthy nodes and [draino](https://github.com/planetlabs/draino) to automatically drain such nodes. Add `node-detacher` so that node termination triggered by `draino` doesn' result in downtime. See https://github.com/kubernetes/node-problem-detector#remedy-systems
   - Optionally add more node-problem-detector rules by referencing [uswitch's prebuilt rules](https://github.com/uswitch/node-problem-detector)
+- Ingress controller like [contour](https://github.com/projectcontour/contour) as a daemonset. When a rolling-update on the daemonset began, `node-detacher` immediately start detaching the node where the `Terminating` pod is running, which reduces downtime due to rolling-update.
 
 ## Why `node-detacher`?
 
@@ -77,6 +78,8 @@ With this application in place, the overall node shutdown process with Cluster A
 
 `node-detacher` runs the following steps in a control loop:
 
+### For Nodes
+
 - On `Node` resource change -
 - Is the node exists?
   - No -> The node is already terminated. We have nothing to do no matter if it's properly detached from LBs or not. Exit this loop.
@@ -94,6 +97,14 @@ With this application in place, the overall node shutdown process with Cluster A
   - Call `DeregisterInstancesFromLoadBalancer` API for the loadbalancer specified by `clb.node-detacher.variant.run/<load balancer name>` label
 - Set the node condition `NodeBeingDetached` to `True`, so that in the next loop we won't duplicate the work of de-registering the node
 
+### For DaemonSet Pods
+
+- On `Pod` resource change...
+- Is the pod managed by the target daemonset?
+  - No -> Exit this loop.
+- Detach the node the terminating pod is running
+  - (The same algorithm for nodes explained above)
+
 ## Requirements
 
 **IAM Permissions**:
@@ -109,8 +120,13 @@ Please provide the following policy document the IAM user or role used by the po
         {
             "Effect": "Allow",
             "Action": [
-                "autoscaling:DescribeAutoScalingInstances",
-                "autoscaling:DetachInstances",
+                "elasticloadbalancing:DescribeLoadBalancers",
+                "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+                "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+                "elasticloadbalancing:DescribeTargetGroups",
+                "elasticloadbalancing:DescribeTargetHealth",
+                "elasticloadbalancing:RegisterTargets",
+                "elasticloadbalancing:DeregisterTargets"
             ],
             "Resource": "*"
         }
@@ -225,18 +241,26 @@ spec:
 
 ```console
 Usage of node-detacher:
-  -enable-alb-ingress-integration
-    	Enable aws-alb-ingress-controller integration (default true)
-  -enable-dynamic-clb-integration type: LoadBalancer
-    	Enable integration with classical load balancers (a.k.a ELB v1) managed by type: LoadBalancer services (default true)
-  -enable-dynamic-nlb-integration type: LoadBalancer
-    	Enable integration with network load balancers (a.k.a ELB v2 NLB) managed by type: LoadBalancer services (default true)
+  -daemonset [NAMESPACE/]NAME
+    	Enable daemonset integration by specifying target daemonset(s). This flag can be specified multiple times to target two or more daemonsets.
+    	Example: --daemonsets contour --daemonsets anotherns/nginx-ingress ([NAMESPACE/]NAME)
+  -enable-alb-ingress-integration [true|false]
+    	Enable aws-alb-ingress-controller integration
+    	Possible values are [true|false] (default true)
+  -enable-dynamic-clb-integration [true|false]
+    	Enable integration with classical load balancers (a.k.a ELB v1) managed by "type: LoadBalancer" services
+    	Possible values are [true|false] (default true)
+  -enable-dynamic-nlb-integration [true|false]
+    	Enable integration with network load balancers (a.k.a ELB v2 NLB) managed by "type: LoadBalancer" services
+    	Possible values are [true|false] (default true)
   -enable-leader-election
     	Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.
-  -enable-static-clb-integration
-    	Enable integration with classical load balancers (a.k.a ELB v1) managed externally to Kubernetes, e.g. by Terraform or CloudFormation (default true)
-  -enable-static-tg-integration
-    	Enable integration with application load balancers and network load balancers (a.k.a ELB v2 ALBs and NLBs) managed externally to Kubernetes, e.g. by Terraform or CloudFormation (default true)
+  -enable-static-clb-integration [true|false]
+    	Enable integration with classical load balancers (a.k.a ELB v1) managed externally to Kubernetes, e.g. by Terraform or CloudFormation
+    	Possible values are [true|false] (default true)
+  -enable-static-tg-integration [true|false]
+    	Enable integration with application load balancers and network load balancers (a.k.a ELB v2 ALBs and NLBs) managed externally to Kubernetes, e.g. by Terraform or CloudFormation.
+    	Possible values are [true|false] (default true)
   -kubeconfig string
     	Paths to a kubeconfig. Only required if out-of-cluster.
   -master --kubeconfig
@@ -247,7 +271,21 @@ Usage of node-detacher:
     	The period in seconds between each forceful iteration over all the nodes (default 10s)
 ```
 
-## Build Instruction
+## Contributing
+
+`node-detacher` currently supports only Kubernetes on AWS.
+
+### Add support for more cloud providers
+
+If you'd like to make this work on another cloud, I'm more than happy to discuss, review and accept pull requests.
+
+When you're adding a support for another cloud provider, I'd also appreciate if you could give me cloud credit or a test account for the cloud provider, so that I can test it myself.
+
+## Developing
+
+If you'd like contributing to this project, please refer to the below guide for test and build instructions.
+
+### Build Instruction
 
 The only pre-requisite for building is [docker](https://docker.com). All builds take place inside a docker container. If you want, you _may_ build locally using locally installed go. It requires go version 1.13+.
 
@@ -265,7 +303,7 @@ $ make build BUILD=local     # builds the binary via locally installed go in `bi
 $ make image BUILD=local     # builds the docker image
 ```
 
-## Test instruction
+### Test instruction
 
 For Docker for Mac:
 

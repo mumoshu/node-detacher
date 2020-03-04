@@ -18,6 +18,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"time"
 
@@ -39,6 +40,16 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
+type StringSlice []string
+
+func (ss *StringSlice) String() string {
+	return fmt.Sprint("%v", *ss)
+}
+func (ss *StringSlice) Set(v string) error {
+	*ss = append(*ss, v)
+	return nil
+}
+
 func main() {
 	var (
 		syncPeriod           time.Duration
@@ -50,6 +61,8 @@ func main() {
 		dynamicNLBs bool
 		staticCLBs  bool
 		staticTGs   bool
+
+		daemonsets StringSlice
 	)
 
 	flag.DurationVar(&syncPeriod, "sync-period", 10*time.Second, "The period in seconds between each forceful iteration over all the nodes")
@@ -57,19 +70,20 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
 	flag.BoolVar(&albIngress, "enable-alb-ingress-integration", true,
-		"Enable aws-alb-ingress-controller integration",
+		"Enable aws-alb-ingress-controller integration\nPossible values are `[true|false]`",
 	)
 	flag.BoolVar(&dynamicCLBs, "enable-dynamic-clb-integration", true,
-		"Enable integration with classical load balancers (a.k.a ELB v1) managed by `type: LoadBalancer` services",
+		"Enable integration with classical load balancers (a.k.a ELB v1) managed by \"type: LoadBalancer\" services\nPossible values are `[true|false]`",
 	)
 	flag.BoolVar(&dynamicNLBs, "enable-dynamic-nlb-integration", true,
-		"Enable integration with network load balancers (a.k.a ELB v2 NLB) managed by `type: LoadBalancer` services",
+		"Enable integration with network load balancers (a.k.a ELB v2 NLB) managed by \"type: LoadBalancer\" services\nPossible values are `[true|false]`",
 	)
 	flag.BoolVar(&staticCLBs, "enable-static-clb-integration", true,
-		"Enable integration with classical load balancers (a.k.a ELB v1) managed externally to Kubernetes, e.g. by Terraform or CloudFormation",
+		"Enable integration with classical load balancers (a.k.a ELB v1) managed externally to Kubernetes, e.g. by Terraform or CloudFormation\nPossible values are `[true|false]`",
 	)
 	flag.BoolVar(&staticTGs, "enable-static-tg-integration", true,
-		"Enable integration with application load balancers and network load balancers (a.k.a ELB v2 ALBs and NLBs) managed externally to Kubernetes, e.g. by Terraform or CloudFormation")
+		"Enable integration with application load balancers and network load balancers (a.k.a ELB v2 ALBs and NLBs) managed externally to Kubernetes, e.g. by Terraform or CloudFormation.\nPossible values are `[true|false]`")
+	flag.Var(&daemonsets, "daemonset", "Enable daemonset integration by specifying target daemonset(s). This flag can be specified multiple times to target two or more daemonsets.\nExample: --daemonsets contour --daemonsets anotherns/nginx-ingress (`[NAMESPACE/]NAME`)")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(func(o *zap.Options) {
@@ -95,7 +109,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	nodeReconciler := &NodeReconciler{
+	reconcilerTemplate := NodeReconciler{
 		Client:                              mgr.GetClient(),
 		Log:                                 ctrl.Log.WithName("controllers").WithName("Runner"),
 		Scheme:                              mgr.GetScheme(),
@@ -109,8 +123,18 @@ func main() {
 		elbv2Svc:                            elbv2Svc,
 	}
 
+	nodeReconciler := reconcilerTemplate
+
 	if err = nodeReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Node")
+		os.Exit(1)
+	}
+
+	daemonsetPodReconciler := nodeReconciler
+	daemonsetPodReconciler.DaemonSets = daemonsets
+
+	if err = daemonsetPodReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Pod")
 		os.Exit(1)
 	}
 
