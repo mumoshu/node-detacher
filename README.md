@@ -168,97 +168,27 @@ It isn't recommended but you can alternatively create an IAM user and set `AWS_A
 
 `node-detacher` is available as a docker image. To run on a machine that is external to your Kubernetes cluster:
 
-```
+```console
 docker run -d mumoshu/node-detacher:<version>
 ```
 
 To run in Kubernetes:
 
-```yml
-apiVersion: core/v1
-kind: ServiceAccount
-metadata:
-  name: node-detacher
-  labels:
-    name: node-detacher
-  namespace: kube-system
----
-apiVersion: rbac.authorization.k8s.io/v1beta1
-kind: ClusterRole
-metadata:
-  name: node-detacher
-  labels:
-    name: node-detacher
-rules:
-  - apiGroups:
-      - "*"
-    resources:
-      - "*"
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - "*"
-    resources:
-      - nodes
-    verbs:
-      - get
-      - list
-      - watch
----
-apiVersion: rbac.authorization.k8s.io/v1beta1
-kind: ClusterRoleBinding
-metadata:
-  name: node-detacher
-  labels:
-    name: node-detacher
-roleRef:
-  kind: ClusterRole
-  name: node-detacher
-  apiGroup: rbac.authorization.k8s.io
-subjects:
-  - kind: ServiceAccount
-    name: node-detacher
-    namespace: kube-system
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: node-detacher
-  labels:
-    name: node-detacher
-  namespace: kube-system
-spec:
-  replicas: 1
-  template:
-    metadata:
-      labels:
-        name: node-detacher
-    spec:
-      containers:
-      - name: node-detacher
-        # Remove this `envFrom` field when you rely on the node or pod IAM role
-        envFrom:
-        - secretRef:
-            name: aws-node-detacher
-        image: 'mumoshu/node-detacher'
-        imagePullPolicy: Always
-      restartPolicy: Always
-      serviceAccountName: node-detacher
-      # to allow it to run on master
-      tolerations:
-        - effect: NoSchedule
-          operator: Exists
-      # we specifically want to run on master - remove the remaining lines if you do not care where it runns
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                - key: kubernetes.io/role
-                  operator: In
-                  values: ["master"]
+```console
+make deploy
+```
+
+`make deploy` calls `kustomize` and `kubectl apply` under the hood:
+
+```console
+cd config/manager && kustomize edit set image controller=${NAME}:${VERSION}
+kustomize build config/default | kubectl apply -f -
+```
+
+For testing purpose, the image can be just `mumoshu/node-detacher:latest` so that the `kustomize edit` command would look like:
+
+```console
+kustomize edit set image controller=mumoshu/node-detacher:latest
 ```
 
 ## Configuration
