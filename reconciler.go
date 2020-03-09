@@ -18,6 +18,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"github.com/aws/aws-sdk-go/service/autoscaling/autoscalingiface"
 	"github.com/aws/aws-sdk-go/service/elb/elbiface"
 	"github.com/aws/aws-sdk-go/service/elbv2/elbv2iface"
@@ -35,17 +37,24 @@ import (
 )
 
 const (
+	NodeAnnotationKeyDetaching         = "node-detacher.variant.run/detaching"
 	NodeConditionTypeNodeBeingDetached = corev1.NodeConditionType("NodeBeingDetached")
 	NodeEventReasonNodeBeingDetached   = "NodeBeingDetached"
 )
 
+// +kubebuilder:rbac:groups=node-detacher.variant.run,resources=attachments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=node-detacher.variant.run,resources=attachments/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=nodes/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=core,resources=events,verbs=get;create;update;patch
+
 // NodeReconciler reconciles a Node object
 type NodeReconciler struct {
 	client.Client
-	Log      logr.Logger
-	recorder record.EventRecorder
-	Scheme   *runtime.Scheme
-	nodes    *Nodes
+	Log             logr.Logger
+	recorder        record.EventRecorder
+	Scheme          *runtime.Scheme
+	nodeAttachments *NodeAttachments
 
 	// ALBIngressIntegrationEnabled is set to true when node-detacher should interoperate with
 	// aws-alb-ingress-controller(https://github.com/kubernetes-sigs/aws-alb-ingress-controller)
@@ -88,6 +97,9 @@ type NodeReconciler struct {
 	// --daemonsets ingress/contour
 	DaemonSets []string
 
+	// Namespace is the namespace in which `attachment` resources are created
+	Namespace string
+
 	asgSvc   autoscalingiface.AutoScalingAPI
 	elbSvc   elbiface.ELBAPI
 	elbv2Svc elbv2iface.ELBV2API
@@ -118,8 +130,6 @@ func (r *NodeReconciler) shouldHandleCLBs() bool {
 func (r *NodeReconciler) configuredForDaemonSets() bool {
 	return len(r.DaemonSets) > 0
 }
-
-// +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch;create;update;patch
 
 func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
@@ -182,22 +192,23 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	log := r.Log.WithValues("node", req.NamespacedName)
 
-	if r.nodes == nil {
-		r.nodes = &Nodes{
-			Log:              ctrl.Log.WithName("models").WithName("Nodes"),
+	if r.nodeAttachments == nil {
+		r.nodeAttachments = &NodeAttachments{
+			Log:              ctrl.Log.WithName("models").WithName("NodeAttachments"),
 			client:           r.Client,
 			asgSvc:           r.asgSvc,
 			elbSvc:           r.elbSvc,
 			elbv2Svc:         r.elbv2Svc,
 			shouldHandleCLBs: r.shouldHandleCLBs(),
 			shouldHandleTGs:  r.shouldHandleTargetGroups(),
+			namespace:        r.Namespace,
 		}
 	}
 
 	if !r.synced && r.staticMode() {
 		log.Info("Labeling all nodes on startup")
 
-		if err := r.nodes.labelAllNodes(); err != nil {
+		if err := r.nodeAttachments.cacheAllNodeAttachments(); err != nil {
 			log.Error(err, "Unable to label all nodes")
 		}
 
@@ -212,10 +223,10 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	if r.staticMode() && !r.nodes.Labeled(node) {
+	if r.staticMode() && !r.nodeAttachments.Cached(node) {
 		log.Info("Labeling node on init", "node", node.Name)
 
-		if err := r.nodes.labelNodes([]corev1.Node{node}); err != nil {
+		if err := r.nodeAttachments.cacheNodeAttachments([]corev1.Node{node}); err != nil {
 			log.Error(err, "Unable to label node")
 		}
 	}
@@ -224,6 +235,14 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	for _, cond := range node.Status.Conditions {
 		if cond.Type == NodeConditionTypeNodeBeingDetached && cond.Status == corev1.ConditionTrue {
+			nodeBeingDetached = true
+
+			break
+		}
+	}
+
+	for k, v := range node.Annotations {
+		if k == NodeAnnotationKeyDetaching && v == "true" {
 			nodeBeingDetached = true
 
 			break
@@ -250,12 +269,17 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		}
 	}
 
+	// Note:
+	// - Node becomes Unschedulable when cordoned
+	// - Node should be considered unschedulable when it is already tained by CA for scale down
 	nodeIsSchedulable := !node.Spec.Unschedulable && !toBeDeletedByCA
 
 	if nodeBeingDetached {
-		log.Info("Node is already being detached", "node", node.Name)
+		log.Info("Node is already being detached")
 
 		if nodeIsSchedulable {
+			log.Info("Node is now schedulable. Re-attaching...")
+
 			// Immediately start re-attaching the node to TGs and CLBs that the node is already de-registered from in the previous loop.
 			//
 			// Why? To interoperate with crashed cluster-autoscaler.
@@ -269,7 +293,7 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			//
 			// See StaticAutoscaler.cleanUpIfRequired for more information on how CA cancels a scale-down after crash:
 			// https://github.com/kubernetes/autoscaler/blob/dbbd4572af2b666d32e582bf88c4239163706f8c/cluster-autoscaler/core/static_autoscaler.go#L170-L190
-			if err := r.nodes.attachNodes([]corev1.Node{node}); err != nil {
+			if err := r.nodeAttachments.attachNodes([]corev1.Node{node}); err != nil {
 				log.Error(err, "Failed to reattach nodes")
 
 				return ctrl.Result{RequeueAfter: 5 * time.Second}, err
@@ -277,15 +301,22 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 			updated := node.DeepCopy()
 
+			updated.Annotations[NodeAnnotationKeyDetaching] = "false"
+
 			updated.Status.Conditions = append(updated.Status.Conditions, corev1.NodeCondition{
-				Type:   NodeConditionTypeNodeBeingDetached,
-				Status: corev1.ConditionFalse,
+				Type:    NodeConditionTypeNodeBeingDetached,
+				Status:  corev1.ConditionFalse,
+				Reason:  "AttachmentStarted",
+				Message: "Successfully stopped detaching and started re-attaching node",
+				LastTransitionTime: metav1.NewTime(time.Now()),
 			})
 
-			if err := r.Update(ctx, updated); err != nil {
-				log.Error(err, "Failed to update node condition", "node", updated.Name)
+			updated.Labels[NodeLabelKeyCached] = "false"
 
-				return ctrl.Result{}, client.IgnoreNotFound(err)
+			if err := r.Client.Update(ctx, updated); err != nil {
+				log.Error(err, "Failed to update node conditions and annotations", "node", updated.Name)
+
+				return ctrl.Result{}, err
 			}
 
 			r.recorder.Event(&node, corev1.EventTypeNormal, "NodeDetatching", "Successfully stopped detaching and started re-attaching node")
@@ -306,34 +337,72 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	if r.dynamicMode() {
 		log.Info("Labeling node on detach", "node", node.Name)
 
-		if err := r.nodes.labelNodes([]corev1.Node{node}); err != nil {
+		if err := r.nodeAttachments.cacheNodeAttachments([]corev1.Node{node}); err != nil {
 			log.Error(err, "Unable to label node")
 		}
 	}
 
 	updated := node.DeepCopy()
 
-	if err := r.nodes.detachNodes(
+	processed, err := r.nodeAttachments.detachNodes(
 		[]corev1.Node{*updated},
-	); err != nil {
+	)
+
+	if err != nil {
 		log.Error(err, "Failed to detach nodes")
 
 		return ctrl.Result{RequeueAfter: 1 * time.Second}, err
 	}
 
+	if !processed {
+		log.Info("Skipped detaching node. Already detaching.")
+
+		return ctrl.Result{}, nil
+	}
+
+	updated.Annotations[NodeAnnotationKeyDetaching] = "true"
+
 	updated.Status.Conditions = append(updated.Status.Conditions, corev1.NodeCondition{
-		Type:   NodeConditionTypeNodeBeingDetached,
-		Status: corev1.ConditionTrue,
+		Type:    NodeConditionTypeNodeBeingDetached,
+		Status:  corev1.ConditionFalse,
+		Reason:  "DetachmentStarted",
+		Message: "Successfully started detaching node",
+		LastTransitionTime: metav1.NewTime(time.Now()),
 	})
 
-	if err := r.Update(ctx, updated); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+	if err := r.Client.Update(ctx, updated); err != nil {
+		log.Error(err, "Failed to update node conditions and annotations for detach", "node", updated.Name)
+
+		return ctrl.Result{}, err
 	}
 
 	r.recorder.Event(&node, corev1.EventTypeNormal, NodeEventReasonNodeBeingDetached, "Successfully started detaching node")
 	log.Info("Started detaching node", "node", node.Name)
 
 	return ctrl.Result{}, nil
+}
+
+func (r *NodeReconciler) SetConditions(node *corev1.Node, newConditions []corev1.NodeCondition) error {
+	for i := range newConditions {
+		// Each time we update the conditions, we update the heart beat time
+		newConditions[i].LastHeartbeatTime = metav1.NewTime(time.Now())
+	}
+
+	patch, err := generatePatch(newConditions)
+	if err != nil {
+		return err
+	}
+
+	return r.Client.Patch(context.TODO(), node, client.ConstantPatch(types.StrategicMergePatchType, patch))
+}
+
+// generatePatch generates condition patch
+func generatePatch(conditions []corev1.NodeCondition) ([]byte, error) {
+	raw, err := json.Marshal(&conditions)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(fmt.Sprintf(`{"status":{"conditions":%s}}`, raw)), nil
 }
 
 func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {

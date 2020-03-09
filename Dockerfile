@@ -29,9 +29,14 @@ FROM golang as build
 
 RUN go build -v -i -o /usr/local/bin/node-detacher
 
-FROM scratch
+# Use distroless as minimal base image to package the manager binary
+# Refer to https://github.com/GoogleContainerTools/distroless for more details
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=build /usr/local/bin/node-detacher /node-detacher
+COPY --from=build /usr/local/bin/node-detacher /manager
 
-CMD ["/node-detacher"]
+USER nonroot:nonroot
+
+ENTRYPOINT ["/manager"]

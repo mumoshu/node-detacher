@@ -14,6 +14,10 @@ else
 TAG = $(HASH)
 endif
 
+# For `make deploy`
+NAME = $(IMAGE)
+VERSION = $(TAG)
+
 # BUILDARCH is the host architecture
 # ARCH is the target architecture
 # we need to keep track of them separately
@@ -92,7 +96,7 @@ else
 endif
 
 image: gitstat
-	docker build -t $(IMGTAG) --build-arg OS=$(OS) --build-arg ARCH=$(ARCH) --build-arg REPO=$(PACKAGE_NAME) --build-arg GOVER=$(GOVER) .
+	docker build -t $(IMGTAG) --build-arg OS=linux --build-arg ARCH=$(ARCH) --build-arg REPO=$(PACKAGE_NAME) --build-arg GOVER=$(GOVER) .
 
 push: gitstat image
 	docker push $(IMGTAG)
@@ -135,7 +139,7 @@ lint: golint golangci-lint builder
 	$(GO) $(LINTER) run -E golint -E gofmt ./...
 
 ## Run unit tests
-test: builder
+test: generate manifests builder
 	# must run go test on my local arch and os
 	$(GO) env GOOS= GOARCH= go test -short ./...
 
@@ -150,9 +154,18 @@ endif
 	$(MAKE) push IMAGETAG=${BRANCH_NAME}
 	$(MAKE) push IMAGETAG=${HASH}
 
+# Deploy controller in the configured Kubernetes cluster in ~/.kube/config
+deploy: manifests
+	cd config/manager && kustomize edit set image controller=${NAME}:${VERSION}
+	kustomize build config/default | kubectl apply -f -
+
 # Generate manifests e.g. CRD, RBAC etc.
 manifests: controller-gen
 	$(CONTROLLER_GEN) $(CRD_OPTIONS) rbac:roleName=manager-role paths="./..." output:crd:artifacts:config=config/crd/bases
+
+# Generate code
+generate: controller-gen
+	$(CONTROLLER_GEN) object:headerFile=./hack/boilerplate.go.txt paths="./..."
 
 # find or download controller-gen
 # download controller-gen if necessary

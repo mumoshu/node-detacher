@@ -19,6 +19,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/mumoshu/node-detacher/api/v1alpha1"
+	"k8s.io/klog"
 	"os"
 	"time"
 
@@ -37,6 +39,8 @@ var (
 func init() {
 	_ = clientgoscheme.AddToScheme(scheme)
 
+	_ = v1alpha1.AddToScheme(scheme)
+
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -51,6 +55,14 @@ func (ss *StringSlice) Set(v string) error {
 }
 
 func main() {
+	// Prevents the following error when fsGroup is set to 65534 for pod iam roles:
+	//   I0309 12:01:54.222632       1 leaderelection.go:241] attempting to acquire leader lease  node-detacher-system/controller-leader-election-helper...
+	//   log: exiting because of error: log: cannot create log: open /tmp/manager.controller-manager-5f7bd48566-mzkgz.unknownuser.log.INFO.20200309-120154.1: no such file or directory
+	klogFlags := flag.NewFlagSet("klog", flag.ContinueOnError)
+	klog.InitFlags(klogFlags)
+	klogFlags.Set("logtostderr", "true")
+	klogFlags.Parse([]string{})
+
 	var (
 		syncPeriod           time.Duration
 		metricsAddr          string
@@ -118,6 +130,7 @@ func main() {
 		DynamicCLBIntegrationEnabled:        dynamicCLBs,
 		StaticTargetGroupIntegrationEnabled: staticTGs,
 		StaticCLBIntegrationEnabled:         staticCLBs,
+		Namespace:                           os.Getenv("POD_NAMESPACE"),
 		asgSvc:                              asgSvc,
 		elbSvc:                              elbSvc,
 		elbv2Svc:                            elbv2Svc,

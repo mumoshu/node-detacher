@@ -2,15 +2,13 @@ package main
 
 import (
 	"fmt"
-	"github.com/aws/aws-sdk-go/service/elb"
-	"github.com/aws/aws-sdk-go/service/elb/elbiface"
-	"strconv"
-
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/autoscaling"
 	"github.com/aws/aws-sdk-go/service/autoscaling/autoscalingiface"
+	"github.com/aws/aws-sdk-go/service/elb"
+	"github.com/aws/aws-sdk-go/service/elb/elbiface"
 	"github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/aws/aws-sdk-go/service/elbv2/elbv2iface"
 )
@@ -241,20 +239,13 @@ func deregisterInstancesFromCLBs(svc elbiface.ELBAPI, lbName string, instanceIDs
 	return nil
 }
 
-func attachInstanceToTG(svc elbv2iface.ELBV2API, tgName string, instanceID string, portOpts ...string) error {
+func attachInstanceToTG(svc elbv2iface.ELBV2API, tgName string, instanceID string, portOpts ...int64) error {
 	descs := []*elbv2.TargetDescription{}
 
 	var portNum *int64
 
 	if len(portOpts) > 0 {
-		portStr := portOpts[0]
-
-		p, err := strconv.Atoi(portStr)
-		if err != nil {
-			return fmt.Errorf("invalid port %q: %w", portStr, err)
-		}
-
-		portNum = aws.Int64(int64(p))
+		portNum = &portOpts[0]
 	}
 
 	descs = append(descs, &elbv2.TargetDescription{
@@ -286,17 +277,12 @@ func attachInstanceToTG(svc elbv2iface.ELBV2API, tgName string, instanceID strin
 	return nil
 }
 
-func deregisterInstanceFromTG(svc elbv2iface.ELBV2API, tgName string, instanceID string, port string) error {
+func deregisterInstanceFromTG(svc elbv2iface.ELBV2API, tgName string, instanceID string, port int64) error {
 	descs := []*elbv2.TargetDescription{}
-
-	portNum, err := strconv.Atoi(port)
-	if err != nil {
-		return fmt.Errorf("invalid port %q: %w", port, err)
-	}
 
 	descs = append(descs, &elbv2.TargetDescription{
 		Id:   aws.String(instanceID),
-		Port: aws.Int64(int64(portNum)),
+		Port: aws.Int64(port),
 	})
 
 	input := &elbv2.DeregisterTargetsInput{

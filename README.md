@@ -6,6 +6,7 @@
 
 `node-detacher` complements famous and useful solutions listed below: 
 
+- Run [`aws-node-termination-handelr](https://github.com/aws/aws-node-termination-handler) along with `node-detacher`. The termination handler cordons the node(=marks the node "unschedulable") on termination notice. The detacher detects the cordoned node and detaches it before termination.
 - Run [`aws-asg-roller`](https://github.com/deitch/aws-asg-roller) along with `node-detacher` in order to avoid potential downtime due to ELB not reacting to node termination fast enough
 - Run `cluster-autoscaler` along with `node-detacher` in order to avoid downtime on scale down
 - Run [`node-problem-detector`](https://github.com/kubernetes/node-problem-detector) to detect unhealthy nodes and [draino](https://github.com/planetlabs/draino) to automatically drain such nodes. Add `node-detacher` so that node termination triggered by `draino` doesn' result in downtime. See https://github.com/kubernetes/node-problem-detector#remedy-systems
@@ -132,6 +133,31 @@ Please provide the following policy document the IAM user or role used by the po
         }
     ]
 }
+```
+
+If you're trying to use IAM roles for Pods, try:
+
+```
+$ make deploy
+
+$ eksctl utils associate-iam-oidc-provider \
+  --cluster ${CLUSTER} \
+  --approve
+
+$ eksctl create iamserviceaccount \
+  --override-existing-serviceaccounts \
+  --cluster ${CLUSTER} \
+  --namespace node-detacher-system \
+  --name default \
+  --attach-policy-arn arn:aws:iam::ACCOUNT_ID:policy/node-detacher \
+  --approve
+
+# Once done, remove the cfn stack for iamserviceaccount
+
+$ eksctl delete iamserviceaccount \
+  --cluster ${CLUSTER} \
+  --namespace node-detacher-system \
+  --name default
 ```
 
 Please consult the AWS documentation for `IAM Role for Pods` in order to provide those permissions via a pod IAM role.
@@ -310,6 +336,30 @@ For Docker for Mac:
 ```
 $ k label node docker-desktop alpha.eksctl.io/instance-id=foobar
 $ go run .
+```
+
+To easily test the cluster-autoscaler support, use `kubectl taint`:
+
+```console
+# Tainting the node the CA's taint key would triggger node detachment
+
+$ k taint node ip-192-168-8-195.us-east-2.compute.internal ToBeDeletedByClusterAutoscaler=:NoSchedule
+
+# Removing the taint triggers re-attachment of the node
+
+$ k untaint node ip-192-168-8-195.us-east-2.compute.internal ToBeDeletedByClusterAutoscaler=:NoSchedule
+```
+
+To easily test the draino support, use `kubectl cordon` and `uncordon`:
+
+```
+# Cordoning the node results in setting node.spec.unschedulable=true that triggers node detachment
+
+$ k cordon ip-192-168-8-195.us-east-2.compute.internal
+
+# Uncordnoning the node results in setting node.spec.unschedulable=false that triggers node reattachment
+
+$ k uncordon ip-192-168-8-195.us-east-2.compute.internal
 ```
 
 ## Acknowledgements

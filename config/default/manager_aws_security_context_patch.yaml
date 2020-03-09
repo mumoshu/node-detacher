@@ -1,0 +1,11 @@
+# This patch inject the fsGroup security context to work around https://github.com/aws/amazon-eks-pod-identity-webhook/issues/8
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-manager
+  namespace: system
+spec:
+  template:
+    spec:
+      securityContext:
+        fsGroup: 65534

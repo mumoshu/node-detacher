@@ -1,0 +1,8 @@
+resources:
+- manager.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+images:
+- name: controller
+  newName: mumoshu/node-detacher
+  newTag: d57bf15c0b0a06df2a8331a256dcc67b694d9d9d-dirty
