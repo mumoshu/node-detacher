@@ -1,6 +1,6 @@
 # node-detacher
 
-`node-detacher` is a Kubernetes controller that watches for unschedulable nodes and immediately detach them from the corresponding target groups and classical load balancers before they, and their pods, go offline.
+`node-detacher` is a Kubernetes controller that detects and detaches unschedulable or to-be-terminated nodes from external load balancers. before they, and their pods, go offline.
 
 ## Use-cases
 
@@ -12,21 +12,28 @@
 - node-problem-detector + draino
 - ingress controllers like contour
 
-[`aws-node-termination-handelr`](https://github.com/aws/aws-node-termination-handler):
+### [`aws-node-termination-handelr`](https://github.com/aws/aws-node-termination-handler)
 
-Use-case: Avoid potential downtime due to 
+Avoid potential downtime due to node termination.
+ 
 - The termination handler cordons the node(=marks the node "unschedulable") on termination notice.
-- The detacher detects the cordoned node and detaches it before termination.
+- But with `exetrnalTrafficPolicy: Cluster`, the loadbalancer keep flowing trafiic to node's NodePort until it finally terminates, which incur a little downtime
+- With `externalTrafficPolicy: Local` with properly configured `healthCheckNodePort` and a health-check endpoint provided the your application, the loadbalancer is unable to stop traffic flowing until the node finally terminates.
+- The detacher detects the cordoned node and detaches it far before termination, so that there is less downtime
 
-[`aws-asg-roller`](https://github.com/deitch/aws-asg-roller):
+### [`aws-asg-roller`](https://github.com/deitch/aws-asg-roller)
 
-Use-case: Avoid potential downtime due to ELB not reacting to node termination fast enough
+Avoid potential downtime due to ELB not reacting to node termination fast enough.
 
-`cluster-autoscaler`:
+The targeted scenario is the same as that for aws-node-termination-handler above.
 
-Use-case: Avoid downtime on scale down
+### `cluster-autoscaler`
 
-[`node-problem-detector`](https://github.com/kubernetes/node-problem-detector) and [draino](https://github.com/planetlabs/draino):
+Avoid downtime on scale down.
+
+The targeted scenario is the same as that for aws-node-termination-handler above.
+
+### [`node-problem-detector`](https://github.com/kubernetes/node-problem-detector) and [draino](https://github.com/planetlabs/draino)
 
 Use-case: Avoid downtime on drain
 
@@ -34,7 +41,7 @@ Use-case: Avoid downtime on drain
 - `draino` detects node conditions and drains the nodes. See See https://github.com/kubernetes/node-problem-detector#remedy-systems.
 - `node-detacher` detects and deregisters drained(cordoned) nodes.
 
-`Ingress controllers`:
+### `Ingress Controllers`
 
 Use-case: Avoid downtime on node drain/termination
 
