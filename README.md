@@ -1,10 +1,12 @@
 # node-detacher
 
-`node-detacher` is a Kubernetes controller that detects and detaches unschedulable or to-be-terminated nodes from external load balancers. before they, and their pods, go offline.
+`node-detacher` is a Kubernetes controller that detects and detaches unschedulable or to-be-terminated nodes from external load balancers.
 
 ## Why?
 
 it is a stop-gap for Kubernetes' inability to "wait" for the traffic from external load balancers to "immediately" stop flowing before the node is finally scheduled for termination.
+
+As the node gets detached before even the pod termination grace period begins, your load balancer gains more time to gracefully stop traffic.
 
 It should always be useful whenever you expose your pods and nodes via node ports and external load balancers.
 
