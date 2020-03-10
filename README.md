@@ -2,15 +2,29 @@
 
 `node-detacher` is a Kubernetes controller that detects and detaches unschedulable or to-be-terminated nodes from external load balancers. before they, and their pods, go offline.
 
+## Why?
+
+it is a stop-gap for Kubernetes' inability to "wait" for the traffic from external load balancers to "immediately" stop flowing before the node is finally scheduled for termination.
+
+It should always be useful whenever you expose your pods and nodes via node ports and external load balancers.
+
+External load balancers can be anything, from ALBs managed by `aws-alb-ingress-controller`, ELBs managed by `type: LoadBalancer` services, `NodePort` and provisions ELBs outside of Kubernetes with e.g. Terraform or CloudFormation.
+
+`node-detacher` avoids "short" downtime after the EC2 instance is terminated and before load balancers finally stops sending traffic.
+
+Note that the length of downtime can theoretically depend on the cloud provier, as cloud providers like AWS are usually eventual consistent.
+
 ## Use-cases
 
-`node-detacher` complements famous and useful solutions listed below:
+`node-detacher` complements the following to keep your service available:
 
-- aws-node-termination-handler
-- aws-aws-roller
-- cluster-autoscaler
-- node-problem-detector + draino
-- ingress controllers like contour
+- [aws-node-termination-handler](#aws-node-termination-handler)
+- [aws-aws-roller](#aws-aws-roller)
+- [cluster-autoscaler](#cluster-autoscaler)
+- [node-problem-detector + draino](#node-problem-detector-and-draino)
+- [ingress controllers like contour](#ingress-controllers)
+- [`type: LadBalancer` services](#type-loadbalancer-services)
+- [`type: NodePort` services]($type-nodeport-services)
 
 ### [`aws-node-termination-handelr`](https://github.com/aws/aws-node-termination-handler)
 
@@ -33,50 +47,6 @@ Avoid downtime on scale down.
 
 The targeted scenario is the same as that for aws-node-termination-handler above.
 
-### [`node-problem-detector`](https://github.com/kubernetes/node-problem-detector) and [draino](https://github.com/planetlabs/draino)
-
-Use-case: Avoid downtime on drain
-
-- `node-problem-detector` detects various node problems and marks the problematic nodes in node conditions. (Also see [uswitch's prebuilt rules](https://github.com/uswitch/node-problem-detector) for more detection rules)
-- `draino` detects node conditions and drains the nodes. See See https://github.com/kubernetes/node-problem-detector#remedy-systems.
-- `node-detacher` detects and deregisters drained(cordoned) nodes.
-
-### `Ingress Controllers`
-
-Use-case: Avoid downtime on node drain/termination
-
-- An ingress controller like [contour](https://github.com/projectcontour/contour) is often deployed as a daemonset with NodePort with `externalTrafficPolicy: Local` and hostPort.
-- When a rolling-update on the daemonset begins, `node-detacher` detaches the node where the `Terminating` pod is running, which prevents downtime
-
-## Why `node-detacher`?
-
-This is a stop-gap for Kubernetes' inability to "wait" for the traffic from ELB/ALB/NLB to stop before the node is finally scheduled for termination.
-
-It is generally useful when you expose your nodes via
-
-- ALBs managed by `aws-alb-ingress-controller`
-- ELBs managed by `type: LoadBalancer` services
-- `NodePort` and provisions ELBs outside of Kubernetes with e.g. Terraform or CloudFormation
-
-In this case, `node-detacher` avoids short(but depends on the situation as AWS is eventual consistent :) ) downtime after the EC2 instance is terminated and before ELB(s) finally stops sending traffic.
-
-It is even more useful when you run any TCP server as DaemonSet behind services whose `externalTrafficPolicy` is set to `Local`.
-In this case, `node-detacher` avoids downtime after all the daemonset pods on the node terminated and before ELB(s) finally stops sending traffic to the node.
-
-### FAQ
-
-Here's the set of common questions that may provide you better understanding of where `node-detacher` is helpful.
-
-> Why `externalTrafficPolicy: Local`?
->
-> It removes an extra hop between the node received the packet on NodePort, and the node that is running the backend pod.
-
-> Why not use `aws-alb-ingress-controller` with the `IP` target mode that directs the traffic to directory to the `aws-vpc-cni-k8s`-managed Pod/ENI IP?
->
-> That's because they are prone to sudden failure of pods. When a pod is failed while running, you need to wait for ELB until it finishes a few healthcecks and finally mark te pod IP unhealthy until the traffic stops flowing into the failed pod.
-
-### With Cluster Autoscaler
-
 With this application in place, the overall node shutdown process with Cluster Autocaler or any other Kubernetes operator that involves terminating nodes would look like this:
 
 - Cluster Autoscaler starts draining the node (on scale down)
@@ -85,22 +55,38 @@ With this application in place, the overall node shutdown process with Cluster A
 - ELB(s) still gradually stop directing the traffic to the nodes. The backend Kubernetes service and pods will starst to receive less and less traffic.
 - ELB(s) stops directing traffic as the EC2 instances are detached. Application processes running inside pods can safely terminates
 
-### With `draino`
+### [`node-problem-detector`](https://github.com/kubernetes/node-problem-detector) and [draino](https://github.com/planetlabs/draino)
 
-- `node-problem-detector` marks a node as problematic.
-- `draino` makes the problematic node unschedulable by [setting `spec.Unschedulable` to `true`](https://github.com/planetlabs/draino/blob/a877e7f0852fc510e74f416bcce7e8569e213141/internal/kubernetes/drainer.go#L148-L162).
-- `node-detacher` detaches the node from corresponding load balancers.
-- Pods being evicted by `draino` gradually stops receiving traffic through the problematic node's NodePorts
-- Pod grace period passes and pods gets terminated.
-- The node gets terminated. As the pods are already terminated and the node is not receiving traffic from LBs, it incurs no downtime.
+Use-case: Avoid downtime on drain
 
-### With `type: LoadBalancer` services
+- `node-problem-detector` detects various node problems and marks the problematic nodes in node conditions. (Also see [uswitch's prebuilt rules](https://github.com/uswitch/node-problem-detector) for more detection rules)
+- `draino` detects node conditions and drains the nodes. See See https://github.com/kubernetes/node-problem-detector#remedy-systems.
+- `node-detacher` detects and deregisters drained(cordoned) nodes.
+
+Notes:
+
+- `draino` makes the problematic node unschedulable by [setting `spec.Unschedulable` to `true`](https://github.com/planetlabs/draino/blob/a877e7f0852fc510e74f416bcce7e8569e213141/internal/kubernetes/drainer.go#L148-L162)
+- Pods being evicted by `draino` gradually stops receiving traffic through the problematic node's NodePorts, before passing several load balancer health checks, as `node-detacher` detaches the node from load balancers.
+- The node gets terminated after pods got terminated after grace period. As the pods are already terminated and the node is not receiving traffic from LBs, it incurs no downtime.
+
+### `Ingress Controllers`
+
+Use-case: Avoid downtime on node drain/termination
+
+- An ingress controller like [contour](https://github.com/projectcontour/contour) is often deployed as a daemonset with NodePort with `externalTrafficPolicy: Local` and hostPort.
+- When a rolling-update on the daemonset begins, `node-detacher` detaches the node where the `Terminating` pod is running, which prevents downtime
+
+### `type: LoadBalancer` services
 
 `node-detacher` allows you to gracefully terminate your nodes without down time due to that `cluster-autoscaler` and `draino` and other Kubernetes controllers and operators are doesn't interoprate with ELBs which is necessary for `externalTrafficPolicy: Local` services.
 
-### With `type: NodePort` services
+### `type: NodePort` services
 
 `node-detacher` allows you to gracefully terminate your nodes without down time due to that `cluster-autoscaler` and `draino` and other Kubernetes controllers and operators are doesn't interoprate with ELBs which is necessary for `externalTrafficPolicy: Local` services.
+
+## FAQ
+
+Here's the set of common questions that may provide you better understanding of where `node-detacher` is helpful.
 
 > Why prefer `NodePort` over `LoadBalancer` type services in the first place?
 >
@@ -109,6 +95,14 @@ With this application in place, the overall node shutdown process with Cluster A
 > - Avoid recreating ELB/ALB/NLB when you recreate the Kubernetes cluster
 >   - There's no need to pre-warn your ELB before switching huge production traffic from the old to the new cluster anymore.
 >   - There's no need to wait for DNS to propagate changes in your endpoint that directs the traffic to the LB anymore.
+
+> Why `externalTrafficPolicy: Local`?
+>
+> It removes an extra hop between the node received the packet on NodePort, and the node that is running the backend pod.
+
+> Why not use `aws-alb-ingress-controller` with the `IP` target mode that directs the traffic to directory to the `aws-vpc-cni-k8s`-managed Pod/ENI IP?
+>
+> That's because they are prone to sudden failure of pods. When a pod is failed while running, you need to wait for ELB until it finishes a few healthcecks and finally mark te pod IP unhealthy until the traffic stops flowing into the failed pod.
 
 ## Algorithm
 
