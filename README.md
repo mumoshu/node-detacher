@@ -8,6 +8,8 @@ it is a stop-gap for Kubernetes' inability to "wait" for the traffic from extern
 
 As the node gets detached before even the pod termination grace period begins, your load balancer gains more time to gracefully stop traffic.
 
+Have you ever tried the combination of `externalTrafficPolicy: Local` and `healthCheckNodePort` and configured your load balancer to have shorter grace period than your pods, for high availability on node roll? With `node-detacher`, your load balancer doesn't even need to wait for several health checks before the detachment starts. It starts detaching immediately, so that you can usually set the same length of grace periods for both `healthCheckNodePort` and the load balancer.
+
 It should always be useful whenever you expose your pods and nodes via node ports and external load balancers.
 
 External load balancers can be anything, from ALBs managed by `aws-alb-ingress-controller`, ELBs managed by `type: LoadBalancer` services, `NodePort` and provisions ELBs outside of Kubernetes with e.g. Terraform or CloudFormation.
