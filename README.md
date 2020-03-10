@@ -2,16 +2,44 @@
 
 `node-detacher` is a Kubernetes controller that watches for unschedulable nodes and immediately detach them from the corresponding target groups and classical load balancers before they, and their pods, go offline.
 
-## Recommended Usage
+## Use-cases
 
-`node-detacher` complements famous and useful solutions listed below: 
+`node-detacher` complements famous and useful solutions listed below:
 
-- Run [`aws-node-termination-handelr](https://github.com/aws/aws-node-termination-handler) along with `node-detacher`. The termination handler cordons the node(=marks the node "unschedulable") on termination notice. The detacher detects the cordoned node and detaches it before termination.
-- Run [`aws-asg-roller`](https://github.com/deitch/aws-asg-roller) along with `node-detacher` in order to avoid potential downtime due to ELB not reacting to node termination fast enough
-- Run `cluster-autoscaler` along with `node-detacher` in order to avoid downtime on scale down
-- Run [`node-problem-detector`](https://github.com/kubernetes/node-problem-detector) to detect unhealthy nodes and [draino](https://github.com/planetlabs/draino) to automatically drain such nodes. Add `node-detacher` so that node termination triggered by `draino` doesn' result in downtime. See https://github.com/kubernetes/node-problem-detector#remedy-systems
-  - Optionally add more node-problem-detector rules by referencing [uswitch's prebuilt rules](https://github.com/uswitch/node-problem-detector)
-- Ingress controller like [contour](https://github.com/projectcontour/contour) as a daemonset. When a rolling-update on the daemonset began, `node-detacher` immediately start detaching the node where the `Terminating` pod is running, which reduces downtime due to rolling-update.
+- aws-node-termination-handler
+- aws-aws-roller
+- cluster-autoscaler
+- node-problem-detector + draino
+- ingress controllers like contour
+
+[`aws-node-termination-handelr`](https://github.com/aws/aws-node-termination-handler):
+
+Use-case: Avoid potential downtime due to 
+- The termination handler cordons the node(=marks the node "unschedulable") on termination notice.
+- The detacher detects the cordoned node and detaches it before termination.
+
+[`aws-asg-roller`](https://github.com/deitch/aws-asg-roller):
+
+Use-case: Avoid potential downtime due to ELB not reacting to node termination fast enough
+
+`cluster-autoscaler`:
+
+Use-case: Avoid downtime on scale down
+
+[`node-problem-detector`](https://github.com/kubernetes/node-problem-detector) and [draino](https://github.com/planetlabs/draino):
+
+Use-case: Avoid downtime on drain
+
+- `node-problem-detector` detects various node problems and marks the problematic nodes in node conditions. (Also see [uswitch's prebuilt rules](https://github.com/uswitch/node-problem-detector) for more detection rules)
+- `draino` detects node conditions and drains the nodes. See See https://github.com/kubernetes/node-problem-detector#remedy-systems.
+- `node-detacher` detects and deregisters drained(cordoned) nodes.
+
+`Ingress controllers`:
+
+Use-case: Avoid downtime on node drain/termination
+
+- An ingress controller like [contour](https://github.com/projectcontour/contour) is often deployed as a daemonset with NodePort with `externalTrafficPolicy: Local` and hostPort.
+- When a rolling-update on the daemonset begins, `node-detacher` detaches the node where the `Terminating` pod is running, which prevents downtime
 
 ## Why `node-detacher`?
 
