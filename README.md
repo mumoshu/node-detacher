@@ -81,22 +81,41 @@ With this application in place, the overall node shutdown process with Cluster A
 
 ### For Nodes
 
-- On `Node` resource change -
-- Is the node exists?
-  - No -> The node is already terminated. We have nothing to do no matter if it's properly detached from LBs or not. Exit this loop.
-- (Only in the static mode) If not yet done, label the node with target group ARNs and optionally target ports, and/or CLBs
-  - For targets without port overrides, it uses the label `tg.node-detacher.variant.run/<target-group-arn>`
-  - For targets with port overrides, it uses the label `tg.node-detacher.variant.run/<target-group-arn>/<port number>`
-  - For CLBs, it uses the label `clb.node-detacher.variant.run/<load balancer name>`
+- Watch for Kubernetes `Node` resource change
+- Does the node still exist?
+  - No
+    - Description: The node is already terminated. It may have properly detached from LBs by `node-detacher`, or may not. But we have nothing to do at this point.
+    - Action: Exit this loop.
+- (Only in the static mode) If not yet done, cache the target group ARNs and ports, and/or CLBs associated to the node.
+  - See the definition of `node-detacher.variant.run/Attachment` custom resource for more information and the data structure.
+- Is the node already being detached?
+  - i.e. Does the node have a condition `NodeBeingDetached=True` or an annotation `node-detacher.variant.run/detaching=true`?
 - Is the node is unschedulable?
   - i.e. Does it have a `ToBeDeletedByClusterAutoscaler` taint, or `node.spec.Unschedulable` set to `true`?
-  - No -> The node is not scheduled for termination. Exit this loop.
-- Is the node has condition `NodeBeingDetached` set to `True`?
-  - Yes -> The node is already scheduled for detachment/deregistration. All we need is to hold on and wish the node to properly deregistered from LBs in time. Ecit the loop.
+- Is the node being detached AND is schedulable?
+  - Yes
+    - Description: The node was scheduled for detachment, but it is now schedublale.
+    - Action: Re-attach the node to target groups and CLBs. Then exit the loop.
+- Is the node being detached AND is unschedulable?
+  - Yes
+    - Description: The node is already scheduled for detachment/deregistration. All we need is to hold on and wish the node to properly deregistered from LBs in time
+    - Action: Exit the loop.
+- Is the node schedulable?
+  - Yes
+    - Description: The node is not scheduled for termination
+    - Action: Exit this loop.
+- (At this point, we know that the node is not being detaching AND is unschedulable)
 - Deregister the node from target groups or CLBs
-  - Deregister the node from the target group specified by `tg.node-detacher.variant.run/<target-group-arn>` label
-  - Call `DeregisterInstancesFromLoadBalancer` API for the loadbalancer specified by `clb.node-detacher.variant.run/<load balancer name>` label
-- Set the node condition `NodeBeingDetached` to `True`, so that in the next loop we won't duplicate the work of de-registering the node
+  - Deregister the node from the target group specified by `attachment.spec.awsTargets[]`.
+  - Deregister the node from the CLBs specified by `attachment.spec.awsLoadBalancers[]`
+- Mark the node as "being detached"
+  - So that in the next loop we won't duplicate the work of de-registering the node
+  - More concretely, set the node condition `NodeBeingDetached=True` and a node annotation `node-detacher.variant.run/detaching=true`
+
+For caching node target groups and CLBs, `node-detacher` uses a specific Kubernetes custom resource.
+
+- For target group targets, it uses `spec.awsTargets[].arn` and `spec.awsTargets[].port`
+- For CLBs, it uses `spec.awsLoadBalancers[].name`
 
 ### For DaemonSet Pods
 
@@ -135,35 +154,6 @@ Please provide the following policy document the IAM user or role used by the po
 }
 ```
 
-If you're trying to use IAM roles for Pods, try:
-
-```
-$ make deploy
-
-$ eksctl utils associate-iam-oidc-provider \
-  --cluster ${CLUSTER} \
-  --approve
-
-$ eksctl create iamserviceaccount \
-  --override-existing-serviceaccounts \
-  --cluster ${CLUSTER} \
-  --namespace node-detacher-system \
-  --name default \
-  --attach-policy-arn arn:aws:iam::ACCOUNT_ID:policy/node-detacher \
-  --approve
-
-# Once done, remove the cfn stack for iamserviceaccount
-
-$ eksctl delete iamserviceaccount \
-  --cluster ${CLUSTER} \
-  --namespace node-detacher-system \
-  --name default
-```
-
-Please consult the AWS documentation for `IAM Role for Pods` in order to provide those permissions via a pod IAM role.
-
-It isn't recommended but you can alternatively create an IAM user and set `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` envvars to provide the permissions.
-
 ## Deployment
 
 `node-detacher` is available as a docker image. To run on a machine that is external to your Kubernetes cluster:
@@ -190,6 +180,77 @@ For testing purpose, the image can be just `mumoshu/node-detacher:latest` so tha
 ```console
 kustomize edit set image controller=mumoshu/node-detacher:latest
 ```
+
+## Running on AWS
+
+If you're trying to use IAM roles for Pods,
+try using `eksctl` to fully configure your cluster:
+
+```
+$ cat <<EOC > cluster.yaml
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: ${CLUSTER_NAME}
+  region: us-east-2
+
+nodeGroups:
+  - name: mynodegroup
+    desiredCapacity: 2
+    minSize: 2
+    maxSize: 12
+    instancesDistribution:
+      maxPrice: 0.08
+      instanceTypes:
+        - c5.xlarge
+        - c4.xlarge
+      onDemandBaseCapacity: 0
+      onDemandPercentageAboveBaseCapacity: 50
+      spotInstancePools: 4
+    volumeSize: 100
+    kubeletExtraConfig:
+      cpuCFSQuota: false
+    iam:
+      withAddonPolicies:
+        imageBuilder: true
+        autoScaler: true
+      attachPolicyARNs:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCor\
+e  # https://github.com/mumoshu/kube-ssm-agent
+        - arn:aws:iam::${ACCOUNT_ID}:policy/node-detacher
+EOC
+
+$ eksctl create cluster -f cluster.yaml
+
+$ make deploy
+
+$ eksctl utils associate-iam-oidc-provider \
+  --cluster ${CLUSTER} \
+  --approve
+
+$ eksctl create iamserviceaccount \
+  --override-existing-serviceaccounts \
+  --cluster ${CLUSTER} \
+  --namespace node-detacher-system \
+  --name default \
+  --attach-policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/node-detacher \
+  --approve
+
+# Once done, remove the cfn stack for iamserviceaccount
+
+$ eksctl delete iamserviceaccount \
+  --cluster ${CLUSTER} \
+  --namespace node-detacher-system \
+  --name default
+```
+
+Please consult the AWS documentation for `IAM Role for Pods` in order to provide those permissions via a pod IAM role.
+
+It isn't recommended but you can alternatively create an IAM user and set `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` envvars to provide the permissions.
+
 
 ## Configuration
 
