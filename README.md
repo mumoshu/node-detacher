@@ -20,7 +20,7 @@ Note that the length of downtime can theoretically depend on the cloud provier, 
 
 ## Use-cases
 
-`node-detacher` complements the following to keep your service available:
+`node-detacher` complements the following to keep your production services highly available:
 
 - [aws-node-termination-handler](#aws-node-termination-handler)
 - [aws-aws-roller](#aws-aws-roller)
