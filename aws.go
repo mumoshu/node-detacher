@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/elbv2/elbv2iface"
 )
 
-func getIdToCLBs(svc elbiface.ELBAPI, ids []string) (map[string][]string, error) {
+func getIDToCLBs(svc elbiface.ELBAPI, ids []string) (map[string][]string, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -55,7 +55,7 @@ func getIdToCLBs(svc elbiface.ELBAPI, ids []string) (map[string][]string, error)
 	return idToCLBs, nil
 }
 
-func getIdToTGs(svc elbv2iface.ELBV2API, ids []string) (map[string][]string, map[string]map[string][]elbv2.TargetDescription, error) {
+func getIDToTGs(svc elbv2iface.ELBV2API, ids []string) (map[string][]string, map[string]map[string][]elbv2.TargetDescription, error) {
 	if len(ids) == 0 {
 		return nil, nil, nil
 	}

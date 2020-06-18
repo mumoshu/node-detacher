@@ -65,14 +65,14 @@ func (n *NodeAttachments) cacheNodeAttachments(nodes []corev1.Node) error {
 			continue
 		}
 
-		instanceId, err := getInstanceID(node)
+		instanceID, err := getInstanceID(node)
 		if err != nil {
 			return err
 		}
 
-		nodeToInstance[node.Name] = instanceId
+		nodeToInstance[node.Name] = instanceID
 
-		instanceIDs = append(instanceIDs, instanceId)
+		instanceIDs = append(instanceIDs, instanceID)
 	}
 
 	if len(instanceIDs) == 0 {
@@ -91,7 +91,7 @@ func (n *NodeAttachments) cacheNodeAttachments(nodes []corev1.Node) error {
 	if n.shouldHandleCLBs {
 		var err error
 
-		instanceToCLBs, err = getIdToCLBs(n.elbSvc, instanceIDs)
+		instanceToCLBs, err = getIDToCLBs(n.elbSvc, instanceIDs)
 
 		if err != nil {
 			return err
@@ -103,7 +103,7 @@ func (n *NodeAttachments) cacheNodeAttachments(nodes []corev1.Node) error {
 	if n.shouldHandleTGs {
 		var err error
 
-		_, instanceToTDs, err = getIdToTGs(n.elbv2Svc, instanceIDs)
+		_, instanceToTDs, err = getIDToTGs(n.elbv2Svc, instanceIDs)
 		if err != nil {
 			return err
 		}

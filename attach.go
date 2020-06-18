@@ -9,7 +9,7 @@ import (
 
 func (n *NodeAttachments) attachNodes(nodes []corev1.Node) error {
 	for _, node := range nodes {
-		instanceId, err := getInstanceID(node)
+		instanceID, err := getInstanceID(node)
 		if err != nil {
 			return err
 		}
@@ -48,11 +48,11 @@ func (n *NodeAttachments) attachNodes(nodes []corev1.Node) error {
 			}
 
 			if tg.Port != nil {
-				if err := attachInstanceToTG(n.elbv2Svc, tg.ARN, instanceId, *tg.Port); err != nil {
+				if err := attachInstanceToTG(n.elbv2Svc, tg.ARN, instanceID, *tg.Port); err != nil {
 					return err
 				}
 			} else {
-				if err := attachInstanceToTG(n.elbv2Svc, tg.ARN, instanceId); err != nil {
+				if err := attachInstanceToTG(n.elbv2Svc, tg.ARN, instanceID); err != nil {
 					return err
 				}
 			}
@@ -63,7 +63,7 @@ func (n *NodeAttachments) attachNodes(nodes []corev1.Node) error {
 		}
 
 		for i, l := range attachment.Spec.AwsLoadBalancers {
-			if err := registerInstancesToCLBs(n.elbSvc, l.Name, []string{instanceId}); err != nil {
+			if err := registerInstancesToCLBs(n.elbSvc, l.Name, []string{instanceID}); err != nil {
 				return err
 			}
 

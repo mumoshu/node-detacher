@@ -11,7 +11,7 @@ func (n *NodeAttachments) detachNodes(unschedulableNodes []corev1.Node) (bool, e
 	var processed int
 
 	for _, node := range unschedulableNodes {
-		instanceId, err := getInstanceID(node)
+		instanceID, err := getInstanceID(node)
 		if err != nil {
 			return false, err
 		}
@@ -53,11 +53,11 @@ func (n *NodeAttachments) detachNodes(unschedulableNodes []corev1.Node) (bool, e
 			// just to start de-registering the target earlier.
 
 			if t.Port != nil {
-				if err := deregisterInstanceFromTG(n.elbv2Svc, t.ARN, instanceId, *t.Port); err != nil {
+				if err := deregisterInstanceFromTG(n.elbv2Svc, t.ARN, instanceID, *t.Port); err != nil {
 					return false, err
 				}
 			} else {
-				if err := deregisterInstancesFromTGs(n.elbv2Svc, t.ARN, []string{instanceId}); err != nil {
+				if err := deregisterInstancesFromTGs(n.elbv2Svc, t.ARN, []string{instanceID}); err != nil {
 					return false, err
 				}
 			}
@@ -72,7 +72,7 @@ func (n *NodeAttachments) detachNodes(unschedulableNodes []corev1.Node) (bool, e
 				continue
 			}
 
-			if err := deregisterInstancesFromCLBs(n.elbSvc, l.Name, []string{instanceId}); err != nil {
+			if err := deregisterInstancesFromCLBs(n.elbSvc, l.Name, []string{instanceID}); err != nil {
 				return false, err
 			}
 
