@@ -183,3 +183,11 @@ CONTROLLER_GEN=$(GOBIN)/controller-gen
 else
 CONTROLLER_GEN=$(shell which controller-gen)
 endif
+
+.PHONY: manual-test
+manual-test:
+	kubectl apply -f test.daemonsets.yaml
+	sleep 20
+	kubectl taint node kind-worker ToBeDeletedByClusterAutoscaler=:NoSchedule
+	sleep 20
+	kubectl taint node kind-worker ToBeDeletedByClusterAutoscaler-
