@@ -48,7 +48,7 @@ func init() {
 type StringSlice []string
 
 func (ss *StringSlice) String() string {
-	return fmt.Sprint("%v", *ss)
+	return fmt.Sprintf("%v", *ss)
 }
 func (ss *StringSlice) Set(v string) error {
 	*ss = append(*ss, v)
