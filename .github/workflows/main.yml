@@ -37,4 +37,5 @@ jobs:
     - name: deploy   # when merged into master, tag master and push - ideally, this would be a separate job, but you cannot share docker build cache between jobs
       if: github.event_name == 'push' && endsWith(github.ref,'/master')
       run: |
+        make push
         TAG=latest make push
