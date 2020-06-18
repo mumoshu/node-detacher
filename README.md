@@ -20,8 +20,9 @@ Note that the length of downtime can theoretically depend on the cloud provier, 
 
 ## Use-cases
 
-`node-detacher` complements the following to keep your production services highly available:
+`node-detacher` complements the following to keep your production services highly available and reliable:
 
+- Graceful daemonset pod stop on scale down
 - [aws-node-termination-handler](#aws-node-termination-handler)
 - [aws-aws-roller](#aws-aws-roller)
 - [cluster-autoscaler](#cluster-autoscaler)
@@ -29,6 +30,28 @@ Note that the length of downtime can theoretically depend on the cloud provier, 
 - [ingress controllers like contour](#ingress-controllers)
 - [`type: LadBalancer` services](#type-loadbalancer-services)
 - [`type: NodePort` services]($type-nodeport-services)
+
+### Graceful daemonset pod stop on scale down
+
+There're two target use-case here, including: 
+
+1. Scale down by Cluster Autoscaler
+  - CA doesn't gracefully stop daemonset pods on scale down
+2. Scale down by node-termination-handler variant
+
+The first use-case is important. Without `node-detacher` in place, there's no way to e.g. gracefully stop fluentd to wait for buffer flush on CA scale down.
+
+The second use-case is also important, because draining node before (AWS spot|GCP preemptive instance) termination notice handler doesn't fully cover it.
+
+[GCP/k8s-node-termination-handler](https://github.com/GoogleCloudPlatform/k8s-node-termination-handler) works relatively nice, but it still misses ability to control the deletion order within user pods and system pods.
+
+What if you have `istio` and `fluentd` in respective namespaces `istio-system` and `logging`, where your fluentd doesn't depend on `istio` and hence you want `istio` to be deleted earlier than `fluentd` so that `fluentd` can flush all the logs from `istio` until it shuts down? No way. But configuring the termination handler to not drain but cordon the node and adding `node-detacher` in your cluster gives you the flexible deletion order.  
+
+[awslabs/ec2-spot-labs](https://github.com/awslabs/ec2-spot-labs) just skip deleting daemonset pods. `node-detacher` can help you by deleting daemonset pods after the termination handler deleted other pods.
+
+[aws/aws-node-termination-handler](https://github.com/aws/aws-node-termination-handler/blob/0d528d632f8d3e9712da0fe678fc11240acc2fa4/pkg/node/node.go#L408) supports deleting daemonset pods by setting `--ignore-daemon-sets=false`(See [this issue](https://github.com/aws/aws-node-termination-handler/issues/20)), but as similar as the GCP solution, it doesn't allow granular control of deletion order. `node-detacher` gives that.
+
+Give your pods deletion priorities via integer values in pod annotation `node-detacher.variant.run/deletion-priority`. `node-detacher` deletes pods in the descending order of priorities, regardless of the pod is managed by DeamonSet or anything else(Deployment, Statefulset, and so on).
 
 ### [`aws-node-termination-handelr`](https://github.com/aws/aws-node-termination-handler)
 
@@ -150,13 +173,23 @@ For caching node target groups and CLBs, `node-detacher` uses a specific Kuberne
 - For target group targets, it uses `spec.awsTargets[].arn` and `spec.awsTargets[].port`
 - For CLBs, it uses `spec.awsLoadBalancers[].name`
 
-### For DaemonSet Pods
+### For Ingress DaemonSet Pods
 
 - On `Pod` resource change...
 - Is the pod managed by the target daemonset?
   - No -> Exit this loop.
 - Detach the node the terminating pod is running
   - (The same algorithm for nodes explained above)
+
+### Deleting DaemonSet pods on scale down
+
+Once `node-detacher` finds any node that became unschedulable, it:
+
+1. Queries daemonsets and their pods scheduled onto the node
+2. Sort the pods in the decreasing order of `node-detacher.variant.run/pod-deletion-priority` annotation value as specified in the owner daemonset
+3. Deletes pods in the order
+
+To avoid the pod deleted in the step 3 resurrected by K8s, your daemonset pod should MUST NOT have a toleration against `node-detacher.variant.run/detaching`.
 
 ## Requirements
 
@@ -292,7 +325,7 @@ It isn't recommended but you can alternatively create an IAM user and set `AWS_A
 ```console
 Usage of node-detacher:
   -daemonset [NAMESPACE/]NAME
-    	Enable daemonset integration by specifying target daemonset(s). This flag can be specified multiple times to target two or more daemonsets.
+    	Specifies target daemonsets to be processed by node-detacher. Used only when either -manage-daemonsets or -manage-daemonset-pods is enabled. This flag can be specified multiple times to target two or more daemonsets.
     	Example: --daemonsets contour --daemonsets anotherns/nginx-ingress ([NAMESPACE/]NAME)
   -enable-alb-ingress-integration [true|false]
     	Enable aws-alb-ingress-controller integration
@@ -313,12 +346,26 @@ Usage of node-detacher:
     	Possible values are [true|false] (default true)
   -kubeconfig string
     	Paths to a kubeconfig. Only required if out-of-cluster.
+  -manage-daemonset-pods --daemonsets
+    	Detaches the node when one of the daemonset pods on the pod started terminating. Also specify --daemonsets or annotate daemonsets with node-detaher.variant.run/managed-by=NAME
+  -manage-daemonsets
+    	Detaches the node one by one when the targeted daemonset with RollingUpdate.Policy set to OnDelete became OUTDATED. Also specify --daemonsets to limit the daemonsets which triggers rolls, or annotate daemonsets with node-detacher.variant.run/managed-by=NAME
   -master --kubeconfig
     	(Deprecated: switch to --kubeconfig) The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.
   -metrics-addr string
     	The address the metric endpoint binds to. (default ":8080")
+  -name string
+    	NAME of this node-detacher, used to distinguish one of node-detacher instances and specified in the annotation node-detacher.variant.run/managed-by (default "node-detacher")
+  -namespace string
+    	NAMESPACE to watch resources for
   -sync-period duration
     	The period in seconds between each forceful iteration over all the nodes (default 10s)
+```
+
+You'll probably like to use the following set of flags, so that node-detacher provides the full functionality:
+
+```
+node-detacher -enable-leader-election -daemonsets -daemonset-pods
 ```
 
 ## Contributing

@@ -104,7 +104,7 @@ func (svc *kubernetesSvc) getUnschedulableNodes() ([]corev1.Node, error) {
 func getInstanceID(node corev1.Node) (string, error) {
 	labels := node.GetLabels()
 
-	instanceID, ok := labels["alpha.eksctl.io/instance-id"]
+	instanceID, ok := labels[NodeLabelInstanceID]
 	if !ok {
 		return "", fmt.Errorf("node must be labeled with `alpha.eksctl.io/instance-id` for this operator to work")
 	}

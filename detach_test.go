@@ -47,7 +47,7 @@ func TestLoop(t *testing.T) {
 				"anotherasg": {"8", "9", "10"},
 			},
 			map[string]int64{"myasg": 2, "anotherasg": 10},
-			map[string]map[string]bool{"node1":map[string]bool{"myasg": true}},
+			map[string]map[string]bool{"node1": map[string]bool{"myasg": true}},
 			map[string]int64{"myasg": 2, "anotherasg": 0},
 			map[string]int64{"myasg": 2},
 			map[string]int64{"myasg": 2, "anotherasg": 0},

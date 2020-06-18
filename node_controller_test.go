@@ -37,7 +37,7 @@ func SetupTest(ctx context.Context) *corev1.Namespace {
 		mgr, err := ctrl.NewManager(cfg, ctrl.Options{})
 		Expect(err).NotTo(HaveOccurred(), "failed to create manager")
 
-		controller := &NodeReconciler{
+		controller := &NodeController{
 			Client:   mgr.GetClient(),
 			Scheme:   k8sscheme.Scheme,
 			Log:      logf.Log,
@@ -85,7 +85,7 @@ var _ = Context("Inside of a new namespace", func() {
 			{
 				rs := &corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      name,
+						Name: name,
 					},
 					Spec: corev1.NodeSpec{
 						Unschedulable: false,
@@ -117,7 +117,7 @@ var _ = Context("Inside of a new namespace", func() {
 			{
 				rs := &corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      name,
+						Name: name,
 					},
 					Spec: corev1.NodeSpec{
 						Unschedulable: true,

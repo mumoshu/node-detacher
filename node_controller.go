@@ -37,7 +37,15 @@ import (
 )
 
 const (
-	NodeAnnotationKeyDetaching         = "node-detacher.variant.run/detaching"
+	NodeLabelInstanceID        = "alpha.eksctl.io/instance-id"
+	NodeTaintKeyDetaching      = "node-detacher.variant.run/detaching"
+	NodeTaintToBeDeletedByCA   = "ToBeDeletedByClusterAutoscaler"
+	NodeAnnotationKeyDetaching = "node-detacher.variant.run/detaching"
+
+	DaemonSetAnnotationKeyManagedBy     = "node-detacher.variant.run/managed-by"
+	PodAnnotationKeyPodDeletionPriority = "node-detacher.variant.run/deletion-priority"
+	DaemonSetFieldManagedBy             = ".managedby"
+
 	NodeConditionTypeNodeBeingDetached = corev1.NodeConditionType("NodeBeingDetached")
 	NodeEventReasonNodeBeingDetached   = "NodeBeingDetached"
 )
@@ -48,8 +56,11 @@ const (
 // +kubebuilder:rbac:groups=core,resources=nodes/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=get;create;update;patch
 
-// NodeReconciler reconciles a Node object
-type NodeReconciler struct {
+// NodeController reconciles a Node object
+type NodeController struct {
+	// Name is the name of the manager used from within daemonset annotations to specify which node-detacher instance to manage the daemonset
+	Name string
+
 	client.Client
 	Log             logr.Logger
 	recorder        record.EventRecorder
@@ -97,6 +108,12 @@ type NodeReconciler struct {
 	// --daemonsets ingress/contour
 	DaemonSets []string
 
+	// ManageDaemonSets, when set to true, instructs denotes that this a daemonset reconciler
+	ManageDaemonSets bool
+
+	// ManageDaemonSetPods, when set to true, instructs denotes that this a daemonset pod reconciler
+	ManageDaemonSetPods bool
+
 	// Namespace is the namespace in which `attachment` resources are created
 	Namespace string
 
@@ -111,84 +128,24 @@ type NodeReconciler struct {
 //
 // In static mode, node-to-clb and/or node-to-targetgroup relationship is static and can be known at the time of the
 // node being created.
-func (r *NodeReconciler) staticMode() bool {
+func (r *NodeController) staticMode() bool {
 	return !r.dynamicMode()
 }
 
-func (r *NodeReconciler) dynamicMode() bool {
+func (r *NodeController) dynamicMode() bool {
 	return r.ALBIngressIntegrationEnabled || r.DynamicNLBIntegrationEnabled || r.DynamicCLBIntegrationEnabled
 }
 
-func (r *NodeReconciler) shouldHandleTargetGroups() bool {
+func (r *NodeController) shouldHandleTargetGroups() bool {
 	return r.StaticCLBIntegrationEnabled || r.ALBIngressIntegrationEnabled || r.DynamicNLBIntegrationEnabled
 }
 
-func (r *NodeReconciler) shouldHandleCLBs() bool {
+func (r *NodeController) shouldHandleCLBs() bool {
 	return r.StaticCLBIntegrationEnabled || r.DynamicCLBIntegrationEnabled
 }
 
-func (r *NodeReconciler) configuredForDaemonSets() bool {
-	return len(r.DaemonSets) > 0
-}
-
-func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
+func (r *NodeController) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
-
-	if r.configuredForDaemonSets() {
-		log := r.Log.WithValues("pod", req.NamespacedName)
-
-		namespaces := map[string]bool{}
-
-		daemonsetNames := map[string]bool{}
-
-		for _, ds := range r.DaemonSets {
-			nsName := strings.Split(ds, "/")
-
-			if len(nsName) > 1 {
-				namespaces[nsName[0]] = true
-				daemonsetNames[nsName[1]] = true
-			} else {
-				daemonsetNames[nsName[0]] = true
-			}
-		}
-
-		_, nsTargeted := namespaces[req.Namespace]
-		if !nsTargeted {
-			log.Info("Skipping this pod. Only pods in one of target namespaces are reconciled by me.")
-
-			return ctrl.Result{}, nil
-		}
-
-		var latestPod corev1.Pod
-
-		if err := r.Client.Get(ctx, req.NamespacedName, &latestPod); err != nil {
-			log.Error(err, "Failed getting pod owner")
-
-			return ctrl.Result{}, err
-		}
-
-		owner := metav1.GetControllerOf(&latestPod)
-
-		if owner.Kind != "DaemonSet" {
-			log.Info("Skipping this pod. Only daemonset pods are reconciled by me", "kind", owner.Kind)
-
-			return ctrl.Result{}, nil
-		}
-
-		_, ownerTargeted := daemonsetNames[owner.Name]
-
-		if !ownerTargeted {
-			log.Info("Skipping this pod. Only pods that are managed by one of target daemonsets are reconciled by me", "owner", owner.Name)
-
-			return ctrl.Result{}, nil
-		}
-
-		// Continue by reconciling the node on which the pod is running
-		req.NamespacedName = types.NamespacedName{
-			Namespace: "",
-			Name:      latestPod.Spec.NodeName,
-		}
-	}
 
 	log := r.Log.WithValues("node", req.NamespacedName)
 
@@ -205,16 +162,6 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		}
 	}
 
-	if !r.synced && r.staticMode() {
-		log.Info("Labeling all nodes on startup")
-
-		if err := r.nodeAttachments.cacheAllNodeAttachments(); err != nil {
-			log.Error(err, "Unable to label all nodes")
-		}
-
-		r.synced = true
-	}
-
 	var node corev1.Node
 
 	if err := r.Get(ctx, req.NamespacedName, &node); err != nil {
@@ -223,12 +170,46 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	if r.staticMode() && !r.nodeAttachments.Cached(node) {
-		log.Info("Labeling node on init", "node", node.Name)
+	manageAttachment := true
+	// Do detach from ASG only on AWS
+	if _, err := getInstanceID(node); err != nil {
+		manageAttachment = false
+	}
 
-		if err := r.nodeAttachments.cacheNodeAttachments([]corev1.Node{node}); err != nil {
-			log.Error(err, "Unable to label node")
+	if manageAttachment {
+		if !r.synced && r.staticMode() {
+			log.Info("Labeling all nodes on startup")
+
+			if err := r.nodeAttachments.cacheAllNodeAttachments(); err != nil {
+				log.Error(err, "Unable to label all nodes")
+			}
+
+			r.synced = true
 		}
+
+		if r.staticMode() && !r.nodeAttachments.Cached(node) {
+			log.Info("Labeling node on init", "node", node.Name)
+
+			if err := r.nodeAttachments.cacheNodeAttachments([]corev1.Node{node}); err != nil {
+				log.Error(err, "Unable to label node")
+			}
+		}
+	}
+
+	var isMasterNode bool
+
+	for _, t := range node.Spec.Taints {
+		if t.Key == "node-role.kubernetes.io/master" {
+			isMasterNode = true
+
+			break
+		}
+	}
+
+	if isMasterNode {
+		log.Info("Skipped master node")
+
+		return ctrl.Result{}, nil
 	}
 
 	var nodeBeingDetached bool
@@ -251,6 +232,18 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	var toBeDeletedByCA bool
 
+	var hasAnyCustomTaint bool
+
+	var hasAnyK8sTaint bool
+
+	NodeTaintKeyK8sNode := "node.kubernetes.io/"
+
+	ignoredTaintPrefixes := []string{
+		NodeTaintToBeDeletedByCA,
+		NodeTaintKeyDetaching,
+		NodeTaintKeyK8sNode,
+	}
+
 	for _, taint := range node.Spec.Taints {
 		// Cluster Autoscaler tries to make the node unschedulable by adding a taint whose key is
 		// `ToBeDeletedByClusterAutoscaler`.
@@ -262,17 +255,114 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		//
 		// ScaleDown.deleteNode:
 		// https://github.com/kubernetes/autoscaler/blob/af1dd84305d3c6bebd22373a7bcf7aebad5a91f5/cluster-autoscaler/core/scale_down.go#L1109-L1112
-		if taint.Key == "ToBeDeletedByClusterAutoscaler" {
+		if taint.Key == NodeTaintToBeDeletedByCA {
 			toBeDeletedByCA = true
+		}
 
-			break
+		if strings.HasPrefix(taint.Key, NodeTaintKeyK8sNode) {
+			hasAnyK8sTaint = true
+		}
+
+		ignored := false
+		for _, key := range ignoredTaintPrefixes {
+			if strings.HasPrefix(taint.Key, key) {
+				ignored = true
+			}
+		}
+
+		if !ignored {
+			hasAnyCustomTaint = true
 		}
 	}
 
 	// Note:
 	// - Node becomes Unschedulable when cordoned
 	// - Node should be considered unschedulable when it is already tained by CA for scale down
-	nodeIsSchedulable := !node.Spec.Unschedulable && !toBeDeletedByCA
+	// - Node should be considered unschedulable when it is already tained by node-detacher for detachment
+	nodeIsSchedulable := !node.Spec.Unschedulable && !toBeDeletedByCA && !hasAnyK8sTaint && !hasAnyCustomTaint
+
+	detachNode := func() (*ctrl.Result, error) {
+		if !manageAttachment {
+			return nil, nil
+		}
+
+		if r.dynamicMode() {
+			log.Info("Labeling node on detach", "node", node.Name)
+
+			if err := r.nodeAttachments.cacheNodeAttachments([]corev1.Node{node}); err != nil {
+				log.Error(err, "Unable to label node")
+			}
+		}
+
+		processed, err := r.nodeAttachments.detachNodes(
+			[]corev1.Node{node},
+		)
+
+		if err != nil {
+			log.Error(err, "Failed to detach nodes")
+
+			return &ctrl.Result{RequeueAfter: 1 * time.Second}, err
+		}
+
+		if err != nil {
+			log.Error(err, "Failed to detach nodes")
+
+			return &ctrl.Result{RequeueAfter: 1 * time.Second}, err
+		}
+
+		if !processed {
+			log.Info("Skipped detaching node. Already detaching.")
+		}
+
+		return nil, nil
+	}
+
+	deleteDSPods := func() (*ctrl.Result, error) {
+		if err := DeletePods(r.Client, log, node); err != nil {
+			return &ctrl.Result{RequeueAfter: 1 * time.Second}, err
+		}
+
+		return nil, nil
+	}
+
+	detachAll := func() (*ctrl.Result, error) {
+		if r, err := detachNode(); err != nil {
+			return r, err
+		}
+
+		if r, err := deleteDSPods(); err != nil {
+			return r, err
+		}
+
+		return nil, nil
+	}
+
+	attachNode := func() (*ctrl.Result, error) {
+		if !manageAttachment {
+			return nil, nil
+		}
+
+		// Immediately start re-attaching the node to TGs and CLBs that the node is already de-registered from in the previous loop.
+		//
+		// Why? To interoperate with crashed cluster-autoscaler.
+		//
+		// The node with the "NodeDetaching" means we did start detaching the node in the previous loop.
+		// But the node being schedulable after that means that CA cancelled the scale-down.
+		//
+		// As CA already cancelled the scale-down, we should do our best to revert the changes on our side, too.
+		// More concretely, we should re-attach the node to corresponding TGs and CLBs because those are changes
+		// made by node-detacher.
+		//
+		// See StaticAutoscaler.cleanUpIfRequired for more information on how CA cancels a scale-down after crash:
+		// https://github.com/kubernetes/autoscaler/blob/dbbd4572af2b666d32e582bf88c4239163706f8c/cluster-autoscaler/core/static_autoscaler.go#L170-L190
+		if err := r.nodeAttachments.attachNodes([]corev1.Node{node}); err != nil {
+			log.Error(err, "Failed to reattach nodes")
+
+			return &ctrl.Result{RequeueAfter: 5 * time.Second}, err
+		}
+
+		return nil, nil
+	}
 
 	if nodeBeingDetached {
 		log.Info("Node is already being detached")
@@ -280,23 +370,8 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		if nodeIsSchedulable {
 			log.Info("Node is now schedulable. Re-attaching...")
 
-			// Immediately start re-attaching the node to TGs and CLBs that the node is already de-registered from in the previous loop.
-			//
-			// Why? To interoperate with crashed cluster-autoscaler.
-			//
-			// The node with the "NodeDetaching" means we did start detaching the node in the previous loop.
-			// But the node being schedulable after that means that CA cancelled the scale-down.
-			//
-			// As CA already cancelled the scale-down, we should do our best to revert the changes on our side, too.
-			// More concretely, we should re-attach the node to corresponding TGs and CLBs because those are changes
-			// made by node-detacher.
-			//
-			// See StaticAutoscaler.cleanUpIfRequired for more information on how CA cancels a scale-down after crash:
-			// https://github.com/kubernetes/autoscaler/blob/dbbd4572af2b666d32e582bf88c4239163706f8c/cluster-autoscaler/core/static_autoscaler.go#L170-L190
-			if err := r.nodeAttachments.attachNodes([]corev1.Node{node}); err != nil {
-				log.Error(err, "Failed to reattach nodes")
-
-				return ctrl.Result{RequeueAfter: 5 * time.Second}, err
+			if r, err := attachNode(); err != nil {
+				return *r, err
 			}
 
 			updated := node.DeepCopy()
@@ -304,14 +379,16 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			updated.Annotations[NodeAnnotationKeyDetaching] = "false"
 
 			updated.Status.Conditions = append(updated.Status.Conditions, corev1.NodeCondition{
-				Type:    NodeConditionTypeNodeBeingDetached,
-				Status:  corev1.ConditionFalse,
-				Reason:  "AttachmentStarted",
-				Message: "Successfully stopped detaching and started re-attaching node",
+				Type:               NodeConditionTypeNodeBeingDetached,
+				Status:             corev1.ConditionFalse,
+				Reason:             "AttachmentStarted",
+				Message:            "Successfully stopped detaching and started re-attaching node",
 				LastTransitionTime: metav1.NewTime(time.Now()),
 			})
 
 			updated.Labels[NodeLabelKeyCached] = "false"
+
+			untaintNode(updated)
 
 			if err := r.Client.Update(ctx, updated); err != nil {
 				log.Error(err, "Failed to update node conditions and annotations", "node", updated.Name)
@@ -321,6 +398,12 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 			r.recorder.Event(&node, corev1.EventTypeNormal, "NodeDetatching", "Successfully stopped detaching and started re-attaching node")
 			log.Info("Started re-attaching node", "node", node.Name)
+		} else {
+			log.Info("Ensuring node to be detached")
+
+			if r, err := detachAll(); err != nil {
+				return *r, err
+			}
 		}
 
 		return ctrl.Result{}, nil
@@ -334,41 +417,23 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, nil
 	}
 
-	if r.dynamicMode() {
-		log.Info("Labeling node on detach", "node", node.Name)
-
-		if err := r.nodeAttachments.cacheNodeAttachments([]corev1.Node{node}); err != nil {
-			log.Error(err, "Unable to label node")
-		}
+	if r, err := detachAll(); err != nil {
+		return *r, err
 	}
 
 	updated := node.DeepCopy()
 
-	processed, err := r.nodeAttachments.detachNodes(
-		[]corev1.Node{*updated},
-	)
-
-	if err != nil {
-		log.Error(err, "Failed to detach nodes")
-
-		return ctrl.Result{RequeueAfter: 1 * time.Second}, err
-	}
-
-	if !processed {
-		log.Info("Skipped detaching node. Already detaching.")
-
-		return ctrl.Result{}, nil
-	}
-
 	updated.Annotations[NodeAnnotationKeyDetaching] = "true"
 
 	updated.Status.Conditions = append(updated.Status.Conditions, corev1.NodeCondition{
-		Type:    NodeConditionTypeNodeBeingDetached,
-		Status:  corev1.ConditionFalse,
-		Reason:  "DetachmentStarted",
-		Message: "Successfully started detaching node",
+		Type:               NodeConditionTypeNodeBeingDetached,
+		Status:             corev1.ConditionFalse,
+		Reason:             "DetachmentStarted",
+		Message:            "Successfully started detaching node",
 		LastTransitionTime: metav1.NewTime(time.Now()),
 	})
+
+	taintNode(updated, r.Name)
 
 	if err := r.Client.Update(ctx, updated); err != nil {
 		log.Error(err, "Failed to update node conditions and annotations for detach", "node", updated.Name)
@@ -382,7 +447,7 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	return ctrl.Result{}, nil
 }
 
-func (r *NodeReconciler) SetConditions(node *corev1.Node, newConditions []corev1.NodeCondition) error {
+func (r *NodeController) SetConditions(node *corev1.Node, newConditions []corev1.NodeCondition) error {
 	for i := range newConditions {
 		// Each time we update the conditions, we update the heart beat time
 		newConditions[i].LastHeartbeatTime = metav1.NewTime(time.Now())
@@ -405,17 +470,15 @@ func generatePatch(conditions []corev1.NodeCondition) ([]byte, error) {
 	return []byte(fmt.Sprintf(`{"status":{"conditions":%s}}`, raw)), nil
 }
 
-func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.recorder = mgr.GetEventRecorderFor("node-detacher")
+func (r *NodeController) SetupWithManager(mgr ctrl.Manager) error {
+	r.recorder = mgr.GetEventRecorderFor(r.Name)
 
-	if r.configuredForDaemonSets() {
-		err := ctrl.NewControllerManagedBy(mgr).
-			For(&corev1.Pod{}).
-			Complete(r)
+	if err := mgr.GetFieldIndexer().IndexField(&corev1.Pod{}, "spec.nodeName", func(rawObj runtime.Object) []string {
+		pod := rawObj.(*corev1.Pod)
 
-		if err != nil {
-			return err
-		}
+		return []string{pod.Spec.NodeName}
+	}); err != nil {
+		return err
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).

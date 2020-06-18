@@ -98,7 +98,7 @@ func (n *NodeAttachments) detachNodes(unschedulableNodes []corev1.Node) (bool, e
 				return false, err
 			}
 
-			processed ++
+			processed++
 		}
 	}
 

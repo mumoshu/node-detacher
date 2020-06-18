@@ -20,6 +20,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/mumoshu/node-detacher/api/v1alpha1"
+	zap2 "go.uber.org/zap"
 	"k8s.io/klog"
 	"os"
 	"time"
@@ -75,6 +76,15 @@ func main() {
 		staticTGs   bool
 
 		daemonsets StringSlice
+
+		manageDaemonSets    bool
+		manageDaemonSetPods bool
+
+		name string
+
+		namespace string
+
+		logLevel string
 	)
 
 	flag.DurationVar(&syncPeriod, "sync-period", 10*time.Second, "The period in seconds between each forceful iteration over all the nodes")
@@ -95,11 +105,20 @@ func main() {
 	)
 	flag.BoolVar(&staticTGs, "enable-static-tg-integration", true,
 		"Enable integration with application load balancers and network load balancers (a.k.a ELB v2 ALBs and NLBs) managed externally to Kubernetes, e.g. by Terraform or CloudFormation.\nPossible values are `[true|false]`")
-	flag.Var(&daemonsets, "daemonset", "Enable daemonset integration by specifying target daemonset(s). This flag can be specified multiple times to target two or more daemonsets.\nExample: --daemonsets contour --daemonsets anotherns/nginx-ingress (`[NAMESPACE/]NAME`)")
+	flag.Var(&daemonsets, "daemonset", "Specifies target daemonsets to be processed by node-detacher. Used only when either -manage-daemonsets or -manage-daemonset-pods is enabled. This flag can be specified multiple times to target two or more daemonsets.\nExample: --daemonsets contour --daemonsets anotherns/nginx-ingress (`[NAMESPACE/]NAME`)")
+	flag.BoolVar(&manageDaemonSetPods, "manage-daemonset-pods", false,
+		"Detaches the node when one of the daemonset pods on the pod started terminating. Also specify `--daemonsets` or annotate daemonsets with node-detaher.variant.run/managed-by=NAME")
+	flag.BoolVar(&manageDaemonSets, "manage-daemonsets", false,
+		"Detaches the node one by one when the targeted daemonset with RollingUpdate.Policy set to OnDelete became OUTDATED. Also specify --daemonsets to limit the daemonsets which triggers rolls, or annotate daemonsets with node-detacher.variant.run/managed-by=NAME")
+	flag.StringVar(&name, "name", "node-detacher", "NAME of this node-detacher, used to distinguish one of node-detacher instances and specified in the annotation node-detacher.variant.run/managed-by")
+	flag.StringVar(&namespace, "namespace", "", "NAMESPACE to watch resources for")
+	flag.StringVar(&logLevel, "log-level", "info", "Log level. Must be one of debug, info, warn, error")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(func(o *zap.Options) {
 		o.Development = true
+		lvl := zap2.NewAtomicLevelAt(stringToZapLogLevel(logLevel))
+		o.Level = &lvl
 	}))
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
@@ -121,34 +140,68 @@ func main() {
 		os.Exit(1)
 	}
 
-	reconcilerTemplate := NodeReconciler{
+	ns := os.Getenv("POD_NAMESPACE")
+
+	if os.Getenv("WATCH_NAMESPACE") != "" {
+		ns = os.Getenv("WATCH_NAMESPACE")
+	}
+
+	if namespace != "" {
+		ns = namespace
+	}
+
+	nodeController := NodeController{
+		Name:                                name,
 		Client:                              mgr.GetClient(),
-		Log:                                 ctrl.Log.WithName("controllers").WithName("Runner"),
+		Log:                                 ctrl.Log.WithName("controllers").WithName("Node"),
 		Scheme:                              mgr.GetScheme(),
 		ALBIngressIntegrationEnabled:        albIngress,
 		DynamicNLBIntegrationEnabled:        dynamicNLBs,
 		DynamicCLBIntegrationEnabled:        dynamicCLBs,
 		StaticTargetGroupIntegrationEnabled: staticTGs,
 		StaticCLBIntegrationEnabled:         staticCLBs,
-		Namespace:                           os.Getenv("POD_NAMESPACE"),
+		Namespace:                           ns,
 		asgSvc:                              asgSvc,
 		elbSvc:                              elbSvc,
 		elbv2Svc:                            elbv2Svc,
 	}
 
-	nodeReconciler := reconcilerTemplate
-
-	if err = nodeReconciler.SetupWithManager(mgr); err != nil {
+	if err = nodeController.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Node")
 		os.Exit(1)
 	}
 
-	daemonsetPodReconciler := nodeReconciler
-	daemonsetPodReconciler.DaemonSets = daemonsets
+	// Our daemonsets support has the ability to mark outdated daemonset's pods to be detached.
+	// This requires the daemonset pod reconciler to be enabled, hence this block enables the daemonset pod reconciler
+	// when only the daemonset reconciler is explicitly required.
+	if manageDaemonSets || manageDaemonSetPods {
+		podController := PodController{
+			Name:       name,
+			Client:     mgr.GetClient(),
+			Log:        ctrl.Log.WithName("controllers").WithName("Pod"),
+			DaemonSets: daemonsets,
+			Namespace:  ns,
+		}
 
-	if err = daemonsetPodReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Pod")
-		os.Exit(1)
+		if err = podController.SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "Pod")
+			os.Exit(1)
+		}
+	}
+
+	if manageDaemonSets {
+		daemonsetController := DaemonsetController{
+			Name:       name,
+			Client:     mgr.GetClient(),
+			Log:        ctrl.Log.WithName("controllers").WithName("DaemonSet"),
+			DaemonSets: daemonsets,
+			Namespace:  ns,
+		}
+
+		if err = daemonsetController.SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "Pod")
+			os.Exit(1)
+		}
 	}
 
 	// +kubebuilder:scaffold:builder

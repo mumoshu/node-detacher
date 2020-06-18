@@ -23,8 +23,7 @@ func getIdToCLBs(svc elbiface.ELBAPI, ids []string) (map[string][]string, error)
 		idMap[id] = true
 	}
 
-	input := &elb.DescribeLoadBalancersInput{
-	}
+	input := &elb.DescribeLoadBalancersInput{}
 
 	clbs := []*elb.LoadBalancerDescription{}
 
@@ -86,8 +85,7 @@ func getIdToTGs(svc elbv2iface.ELBV2API, ids []string) (map[string][]string, map
 		return nil, nil, nil
 	}
 
-	tgInput := &elbv2.DescribeTargetGroupsInput{
-	}
+	tgInput := &elbv2.DescribeTargetGroupsInput{}
 
 	tgs := []*elbv2.TargetGroup{}
 
