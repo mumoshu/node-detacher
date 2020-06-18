@@ -74,6 +74,7 @@ func main() {
 		metricsAddr          string
 		enableLeaderElection bool
 
+		aws         bool
 		albIngress  bool
 		dynamicCLBs bool
 		dynamicNLBs bool
@@ -94,6 +95,8 @@ func main() {
 
 	flag.DurationVar(&syncPeriod, "sync-period", 10*time.Second, "The period in seconds between each forceful iteration over all the nodes")
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
+	flag.BoolVar(&aws, "enable-aws", true,
+		"Enable AWS support including ELB v1, ELB v2(target group) integrations. Also specify enable-(static|dynamic)(alb|clb|nlb)-integration flags for detailed configuration")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
 	flag.BoolVar(&albIngress, "enable-alb-ingress-integration", true,
@@ -160,6 +163,7 @@ func main() {
 		Client:                              mgr.GetClient(),
 		Log:                                 ctrl.Log.WithName("controllers").WithName("Node"),
 		Scheme:                              mgr.GetScheme(),
+		AWSEnabled:                          aws,
 		ALBIngressIntegrationEnabled:        albIngress,
 		DynamicNLBIntegrationEnabled:        dynamicNLBs,
 		DynamicCLBIntegrationEnabled:        dynamicCLBs,

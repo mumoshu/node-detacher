@@ -195,7 +195,7 @@ To avoid the pod deleted in the step 3 resurrected by K8s, your daemonset pod sh
 
 **IAM Permissions**:
 
-`node-detacher` need access to certain resources and actions.
+When running on AWS and you want ELB integration to work,`node-detacher` needs access to certain resources and actions.
 
 Please provide the following policy document the IAM user or role used by the pods running `node-detacher`:
 
@@ -323,13 +323,15 @@ It isn't recommended but you can alternatively create an IAM user and set `AWS_A
 `node-detacher` takes its configuration via command-line flags:
 
 ```console
-Usage of node-detacher:
+Usage of ./node-detacher:
   -daemonset [NAMESPACE/]NAME
     	Specifies target daemonsets to be processed by node-detacher. Used only when either -manage-daemonsets or -manage-daemonset-pods is enabled. This flag can be specified multiple times to target two or more daemonsets.
     	Example: --daemonsets contour --daemonsets anotherns/nginx-ingress ([NAMESPACE/]NAME)
   -enable-alb-ingress-integration [true|false]
     	Enable aws-alb-ingress-controller integration
     	Possible values are [true|false] (default true)
+  -enable-aws
+    	Enable AWS support including ELB v1, ELB v2(target group) integrations. Also specify enable-(static|dynamic)(alb|clb|nlb)-integration flags for detailed configuration (default true)
   -enable-dynamic-clb-integration [true|false]
     	Enable integration with classical load balancers (a.k.a ELB v1) managed by "type: LoadBalancer" services
     	Possible values are [true|false] (default true)
@@ -346,6 +348,8 @@ Usage of node-detacher:
     	Possible values are [true|false] (default true)
   -kubeconfig string
     	Paths to a kubeconfig. Only required if out-of-cluster.
+  -log-level string
+    	Log level. Must be one of debug, info, warn, error (default "info")
   -manage-daemonset-pods --daemonsets
     	Detaches the node when one of the daemonset pods on the pod started terminating. Also specify --daemonsets or annotate daemonsets with node-detaher.variant.run/managed-by=NAME
   -manage-daemonsets
@@ -362,11 +366,17 @@ Usage of node-detacher:
     	The period in seconds between each forceful iteration over all the nodes (default 10s)
 ```
 
-You'll probably like to use the following set of flags, so that node-detacher provides the full functionality:
+For production deployment with standard usage, you'll usually use the following set of flags:
 
 ```
-node-detacher -enable-leader-election -daemonsets -daemonset-pods
+node-detacher -enable-leader-election
 ```
+
+This gives you:
+
+- High-availability of node-detacher (with replicas >= 2)
+- ELB v1/v2 integration
+- Ordered deletion of daemonset pods before node termination
 
 ## Contributing
 

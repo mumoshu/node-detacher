@@ -67,6 +67,9 @@ type NodeController struct {
 	Scheme          *runtime.Scheme
 	nodeAttachments *NodeAttachments
 
+	// AWS enables AWS support including ELB v1, ELB v2(target group) integrations. Also specify enable-(static|dynamic)(alb|clb|nlb)-integration flags for detailed configuration
+	AWSEnabled bool
+
 	// ALBIngressIntegrationEnabled is set to true when node-detacher should interoperate with
 	// aws-alb-ingress-controller(https://github.com/kubernetes-sigs/aws-alb-ingress-controller)
 	//
@@ -170,7 +173,7 @@ func (r *NodeController) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	manageAttachment := true
+	manageAttachment := r.AWSEnabled // || r.GCPEnabled
 	// Do detach from ASG only on AWS
 	if _, err := getInstanceID(node); err != nil {
 		manageAttachment = false

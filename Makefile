@@ -195,3 +195,8 @@ manual-test:
 .PHONY: test-publish
 test-publish:
 	NODE_DETACHER_VERSION=0.1.0 goreleaser --snapshot --skip-publish --rm-dist
+
+.PHONY: precommit
+precommit:
+	go fmt ./...
+	golangci-lint run -E golint -E gofmt ./...
