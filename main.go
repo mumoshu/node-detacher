@@ -61,8 +61,13 @@ func main() {
 	//   log: exiting because of error: log: cannot create log: open /tmp/manager.controller-manager-5f7bd48566-mzkgz.unknownuser.log.INFO.20200309-120154.1: no such file or directory
 	klogFlags := flag.NewFlagSet("klog", flag.ContinueOnError)
 	klog.InitFlags(klogFlags)
-	klogFlags.Set("logtostderr", "true")
-	klogFlags.Parse([]string{})
+	if err := klogFlags.Set("logtostderr", "true"); err != nil {
+		panic(err)
+	}
+
+	if err := klogFlags.Parse([]string{}); err != nil {
+		panic(err)
+	}
 
 	var (
 		syncPeriod           time.Duration

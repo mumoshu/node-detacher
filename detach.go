@@ -7,18 +7,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-const (
-	LabelValueAttached = "attached"
-	LabelValueDetached = "detached"
-
-	healthy = "Healthy"
-)
-
-// deprecatedDetachUnschedulables runs a set of EC2 instance detachments in the loop to update ASGs to not manage unschedulable K8s nodes
-func (n *NodeAttachments) deprecatedDetachUnschedulables() error {
-	return nil
-}
-
 func (n *NodeAttachments) detachNodes(unschedulableNodes []corev1.Node) (bool, error) {
 	var processed int
 

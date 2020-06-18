@@ -76,6 +76,7 @@ func randStringRunes(n int) string {
 
 var _ = Context("Inside of a new namespace", func() {
 	ctx := context.TODO()
+	_ = SetupTest(ctx)
 
 	Describe("when no existing resources exist", func() {
 

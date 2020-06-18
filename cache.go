@@ -177,14 +177,3 @@ func (n *NodeAttachments) cacheNodeAttachments(nodes []corev1.Node) error {
 
 	return nil
 }
-
-type TargetGroupReference struct {
-	// AccountID is AWS Account's ID
-	AccountID int
-	// Region is the AWS region to use
-	Region string
-}
-
-const (
-	TargetGroupReferenceResourceIDSeparator = "."
-)

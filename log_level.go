@@ -6,8 +6,6 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-var DefaultLogLevel = "info"
-
 func stringToZapLogLevel(lvl string) zapcore.Level {
 	switch lvl {
 	case "debug":
