@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: testapp
+spec:
+  selector:
+    matchLabels:
+      app: testapp
+  template:
+    metadata:
+      labels:
+        app: testapp
+      annotations:
+        node-detacher.variant.run/deletion-priority: "2"
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: testingress
+spec:
+  selector:
+    matchLabels:
+      app: testingress
+  template:
+    metadata:
+      labels:
+        app: testingress
+      annotations:
+        node-detacher.variant.run/deletion-priority: "1"
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: testlog
+spec:
+  selector:
+    matchLabels:
+      app: testlog
+  template:
+    metadata:
+      labels:
+        app: testlog
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: testconsole
+spec:
+  selector:
+    matchLabels:
+      app: testconsole
+  template:
+    metadata:
+      labels:
+        app: testconsole
+      annotations:
+        node-detacher.variant.run/deletion-priority: "-1"
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sleep","10"]
