@@ -38,4 +38,3 @@ jobs:
       if: github.event_name == 'push' && endsWith(github.ref,'/master')
       run: |
         make push
-        TAG=latest make push

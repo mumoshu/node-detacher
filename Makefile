@@ -191,3 +191,7 @@ manual-test:
 	kubectl taint node kind-worker ToBeDeletedByClusterAutoscaler=:NoSchedule
 	sleep 20
 	kubectl taint node kind-worker ToBeDeletedByClusterAutoscaler-
+
+.PHONY: test-publish
+test-publish:
+	NODE_DETACHER_VERSION=0.1.0 goreleaser --snapshot --skip-publish --rm-dist
