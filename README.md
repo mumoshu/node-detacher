@@ -428,7 +428,7 @@ $ k taint node ip-192-168-8-195.us-east-2.compute.internal ToBeDeletedByClusterA
 
 # Removing the taint triggers re-attachment of the node
 
-$ k untaint node ip-192-168-8-195.us-east-2.compute.internal ToBeDeletedByClusterAutoscaler=:NoSchedule
+$ k taint node ip-192-168-8-195.us-east-2.compute.internal ToBeDeletedByClusterAutoscaler-
 ```
 
 To easily test the draino support, use `kubectl cordon` and `uncordon`:
