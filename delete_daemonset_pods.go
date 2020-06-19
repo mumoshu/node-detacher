@@ -80,10 +80,14 @@ func deletePods(c client.Client, log logr.Logger, node corev1.Node) error {
 
 			mylog := log.WithValues("priority", pri, "pod_namespace", po.Namespace, "pod_name", po.Name)
 
-			mylog.Info("Deleting pod")
+			if po.DeletionTimestamp == nil {
+				mylog.Info("deletionTimestamp not set. Deleting pod")
 
-			if err := c.Delete(context.Background(), &po); err != nil {
-				return err
+				if err := c.Delete(context.Background(), &po); err != nil {
+					return err
+				}
+			} else {
+				mylog.Info("deletionTimestamp already set. Skipped deleting pod")
 			}
 
 			wg.Add(1)
