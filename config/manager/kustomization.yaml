@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: mumoshu/node-detacher
-  newTag: 928b1e81739e2610964ea8c15e9aeeb88d91b7bc-dirty
+  newTag: latest
