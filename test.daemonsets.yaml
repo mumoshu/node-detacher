@@ -66,6 +66,7 @@ spec:
       labels:
         app: testconsole
       annotations:
+        node-detacher.variant.run/disable-eviction: "true"
         node-detacher.variant.run/deletion-priority: "-1"
     spec:
       containers:

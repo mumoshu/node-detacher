@@ -43,7 +43,7 @@ The first use-case is important. Without `node-detacher` in place, there's no wa
 
 The second use-case is also important, because draining node before (AWS spot|GCP preemptive instance) termination notice handler doesn't fully cover it.
 
-[GCP/k8s-node-termination-handler](https://github.com/GoogleCloudPlatform/k8s-node-termination-handler) works relatively nice, but it still misses ability to control the deletion order within user pods and system pods.
+[GCP/k8s-node-termination-handler](https://github.com/GoogleCloudPlatform/k8s-node-termination-handler) works relatively nice, but it still misses ability to control the deletion order within user pods and system pods. In addition to that, it has good reason to NOT use the evictions API(See [issue 16](https://github.com/GoogleCloudPlatform/k8s-node-termination-handler/issues/16)) so it doesn't respect PodDisruptionBudget.
 
 What if you have `istio` and `fluentd` in respective namespaces `istio-system` and `logging`, where your fluentd doesn't depend on `istio` and hence you want `istio` to be deleted earlier than `fluentd` so that `fluentd` can flush all the logs from `istio` until it shuts down? No way. But configuring the termination handler to not drain but cordon the node and adding `node-detacher` in your cluster gives you the flexible deletion order.  
 

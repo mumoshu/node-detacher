@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"github.com/mumoshu/node-detacher/api/v1alpha1"
 	zap2 "go.uber.org/zap"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog"
 	"os"
 	"time"
@@ -158,9 +159,18 @@ func main() {
 		ns = namespace
 	}
 
+	config := mgr.GetConfig()
+
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		setupLog.Error(err, "initializing client-go")
+		os.Exit(1)
+	}
+
 	nodeController := NodeController{
 		Name:                                name,
 		Client:                              mgr.GetClient(),
+		CoreV1Client:                        client.CoreV1(),
 		Log:                                 ctrl.Log.WithName("controllers").WithName("Node"),
 		Scheme:                              mgr.GetScheme(),
 		AWSEnabled:                          aws,

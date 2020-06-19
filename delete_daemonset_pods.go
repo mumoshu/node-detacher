@@ -4,8 +4,11 @@ import (
 	"context"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/api/policy/v1beta1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/types"
+	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sort"
 	"strconv"
@@ -16,7 +19,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
-func deletePods(c client.Client, log logr.Logger, node corev1.Node) error {
+func deletePods(c client.Client, c2 v1.CoreV1Interface, log logr.Logger, node corev1.Node) error {
 	prioritizedPods := map[int][]corev1.Pod{}
 
 	var pods corev1.PodList
@@ -83,8 +86,46 @@ func deletePods(c client.Client, log logr.Logger, node corev1.Node) error {
 			if po.DeletionTimestamp == nil {
 				mylog.Info("deletionTimestamp not set. Deleting pod")
 
-				if err := c.Delete(context.Background(), &po); err != nil {
-					return err
+				var evict bool
+
+				if po.Annotations == nil || po.Annotations[PodAnnotationDisableEviction] != "true" {
+					evict = true
+				}
+
+				if evict {
+					mylog.Info("evicting pod due to that the disable-eviction annotation is set to true")
+
+					eviction := &v1beta1.Eviction{
+						ObjectMeta: metav1.ObjectMeta{
+							Namespace: po.Namespace,
+							Name:      po.Name,
+						},
+					}
+
+					GracePeriod := 30 * time.Second
+
+					gracePeriod := &GracePeriod
+
+					if gracePeriod != nil {
+						gracePeriodSeconds := int64(gracePeriod.Seconds())
+						eviction.DeleteOptions = &metav1.DeleteOptions{
+							GracePeriodSeconds: &gracePeriodSeconds,
+						}
+					}
+
+					if err := c2.Pods(po.Namespace).Evict(eviction); err != nil {
+						mylog.Error(err, "evicting pod")
+
+						if !apierrors.IsNotFound(err) {
+							return err
+						}
+					}
+				} else {
+					mylog.Info("deleting pod without taking PDB into account due to that the disable-eviction annotation is not set")
+
+					if err := c.Delete(context.Background(), &po); err != nil {
+						return err
+					}
 				}
 			} else {
 				mylog.Info("deletionTimestamp already set. Skipped deleting pod")
@@ -114,6 +155,6 @@ func deletePods(c client.Client, log logr.Logger, node corev1.Node) error {
 	return nil
 }
 
-func DeletePods(c client.Client, log logr.Logger, node corev1.Node) error {
-	return deletePods(c, log, node)
+func DeletePods(c client.Client, c2 v1.CoreV1Interface, log logr.Logger, node corev1.Node) error {
+	return deletePods(c, c2, log, node)
 }

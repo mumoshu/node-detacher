@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -46,6 +47,8 @@ const (
 	PodAnnotationKeyPodDeletionPriority = "node-detacher.variant.run/deletion-priority"
 	DaemonSetFieldManagedBy             = ".managedby"
 
+	PodAnnotationDisableEviction = "node-detacher.variant.run/disable-eviction"
+
 	NodeConditionTypeNodeBeingDetached = corev1.NodeConditionType("NodeBeingDetached")
 	NodeEventReasonNodeBeingDetached   = "NodeBeingDetached"
 )
@@ -54,6 +57,7 @@ const (
 // +kubebuilder:rbac:groups=node-detacher.variant.run,resources=attachments/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=nodes/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=core,resources=pods/eviction,verbs=create
 // +kubebuilder:rbac:groups=core,resources=events,verbs=get;create;update;patch
 
 // NodeController reconciles a Node object
@@ -125,6 +129,8 @@ type NodeController struct {
 	elbv2Svc elbv2iface.ELBV2API
 
 	synced bool
+
+	CoreV1Client v1.CoreV1Interface
 }
 
 // staticMode returns true when node-detacher's static mode is enabled.
@@ -321,7 +327,7 @@ func (r *NodeController) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	}
 
 	deleteDSPods := func() (*ctrl.Result, error) {
-		if err := DeletePods(r.Client, log, node); err != nil {
+		if err := DeletePods(r.Client, r.CoreV1Client, log, node); err != nil {
 			return &ctrl.Result{RequeueAfter: 1 * time.Second}, err
 		}
 
