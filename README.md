@@ -8,6 +8,7 @@
 
 1. Kubernetes' inability to "wait" for the traffic from external load balancers to "immediately" stop flowing before the node is finally scheduled for termination.
 2. Kubernete's inability to stop pods in a specific order on termination
+3. Kubernete's inability to gracefully stop DaemonSet pods on node termination
 
 For 1, `node-detacher` gives your external load balancer more time to gracefully stop traffic and hence more availability, as the node gets detached before the pod termination grace period begins.
 
@@ -30,6 +31,12 @@ If the system deleted `fluentd` before any other pod for example, `fluentd` is o
 If the system deleted `datadog-agent` before any other pods, it's obviously unable to collect and send metrics from those pods to Datadog.
 
 `node-detacher` allows you to delete all the pods, includign application pods, sidecar proxies, log, and metric collector pods in the descending order of "deletion priority", which solves the issue.
+
+For 3, it isn't actually a Kubernetes problem, but some famouns tools like cluster-autoscaler doesn't gracefully stop daemonset pods on node termination.
+
+It can be problematic when your pod has a local write-ahead log that needs to be flushed before termination, e.g. a mail forwarder like postfix, and a log forwarder like fluentd.
+
+`node-detacher` can gracefully stop daemonset pods in response to `cluster-autoscaler` "marks" the node to be deleted, which solves the issue.
 
 ## Use-cases
 
