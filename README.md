@@ -1,12 +1,15 @@
 # node-detacher
 
-`node-detacher` is a Kubernetes controller that detects and detaches unschedulable or to-be-terminated nodes from external load balancers.
+`node-detacher` is a Kubernetes controller that detects the unschedulable or to-be-terminated node, detaches it from external load balancers, and gracefully stop pods on the node in a preferred order.
 
 ## Why?
 
-it is a stop-gap for Kubernetes' inability to "wait" for the traffic from external load balancers to "immediately" stop flowing before the node is finally scheduled for termination.
+`node-detacher` is designed to be a stop-gap for:
 
-As the node gets detached before even the pod termination grace period begins, your load balancer gains more time to gracefully stop traffic.
+1. Kubernetes' inability to "wait" for the traffic from external load balancers to "immediately" stop flowing before the node is finally scheduled for termination.
+2. Kubernete's inability to stop pods in a specific order on termination
+
+For 1, `node-detacher` gives your external load balancer more time to gracefully stop traffic and hence more availability, as the node gets detached before the pod termination grace period begins.
 
 Have you ever tried the combination of `externalTrafficPolicy: Local` and `healthCheckNodePort` and configured your load balancer to have shorter grace period than your pods, for high availability on node roll? With `node-detacher`, your load balancer doesn't even need to wait for several health checks before the detachment starts. It starts detaching immediately, so that you can usually set the same length of grace periods for both `healthCheckNodePort` and the load balancer.
 
@@ -17,6 +20,16 @@ External load balancers can be anything, from ALBs managed by `aws-alb-ingress-c
 `node-detacher` avoids "short" downtime after the EC2 instance is terminated and before load balancers finally stops sending traffic.
 
 Note that the length of downtime can theoretically depend on the cloud provier, as cloud providers like AWS are usually eventual consistent.
+
+For 2, `node-detacher` helps saving important logs and metrics that are emitted immediately before termination.
+
+Generally speaking, a log collector and a a metrics collector like `fluentd` and `datadog-agent` should not depend on a sidecar proxy like `istio-proxy` and `linkerd-proxy`, and stopped after all the other pods in the node got terminated.
+
+If the system deleted `fluentd` before any other pod for example, `fluentd` is obviously unable to collect and flush logs emitted by those pods.
+
+If the system deleted `datadog-agent` before any other pods, it's obviously unable to collect and send metrics from those pods to Datadog.
+
+`node-detacher` allows you to delete all the pods, includign application pods, sidecar proxies, log, and metric collector pods in the descending order of "deletion priority", which solves the issue.
 
 ## Use-cases
 
