@@ -432,6 +432,12 @@ func (r *NodeController) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	updated := node.DeepCopy()
 
+	if updated.Annotations == nil {
+		// Spec.Annotations seems to be guaranteed to be non-nil at runtime, but not in test.
+		// If we forget this, our controller does panic due to `assignment to entry in nil map` only in test.
+		updated.Annotations = map[string]string{}
+	}
+
 	updated.Annotations[NodeAnnotationKeyDetaching] = "true"
 
 	updated.Status.Conditions = append(updated.Status.Conditions, corev1.NodeCondition{
@@ -449,6 +455,8 @@ func (r *NodeController) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 		return ctrl.Result{}, err
 	}
+
+	log.Info("Successfully tainted node")
 
 	r.recorder.Event(&node, corev1.EventTypeNormal, NodeEventReasonNodeBeingDetached, "Successfully started detaching node")
 	log.Info("Started detaching node", "node", node.Name)
