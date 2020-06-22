@@ -24,13 +24,13 @@ Note that the length of downtime can theoretically depend on the cloud provier, 
 
 For 2, `node-detacher` helps saving important logs and metrics that are emitted immediately before termination.
 
-Generally speaking, a log collector and a a metrics collector like `fluentd` and `datadog-agent` should not depend on a sidecar proxy like `istio-proxy` and `linkerd-proxy`, and stopped after all the other pods in the node got terminated.
+Generally speaking, a log collector and a a metrics collector like `fluentd` and `datadog-agent` should not depend on a node-level forward proxy like Kuma's , and stopped after all the other pods in the node got terminated.
 
 If the system deleted `fluentd` before any other pod for example, `fluentd` is obviously unable to collect and flush logs emitted by those pods.
 
-If the system deleted `datadog-agent` before any other pods, it's obviously unable to collect and send metrics from those pods to Datadog.
+If the system deleted `datadog-agent` before any other pods, it's obviously unable to collect and send metrics from other pods to Datadog.
 
-`node-detacher` allows you to delete all the pods, includign application pods, sidecar proxies, log, and metric collector pods in the descending order of "deletion priority", which solves the issue.
+`node-detacher` allows you to delete all the pods, includign application pods, node-level forward proxies, nodelocal-dns-cache, log, and metric collector pods in the descending order of "deletion priority", which solves the issue.
 
 For 3, it isn't actually a Kubernetes problem, but some famouns tools like cluster-autoscaler doesn't gracefully stop daemonset pods on node termination.
 
