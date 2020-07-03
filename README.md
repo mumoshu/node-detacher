@@ -2,6 +2,8 @@
 
 `node-detacher` is a Kubernetes controller that detects the unschedulable or to-be-terminated node, detaches it from external load balancers, and gracefully stop pods on the node in a preferred order.
 
+It can optionally used for cancelling the detachment by starting stopped pods and then re-attaching the node to the load balancer, which might be useful for e.g. safe rolling update of ingress controllers deployed as daemonsets.
+
 ## Why?
 
 `node-detacher` is designed to be a stop-gap for:
