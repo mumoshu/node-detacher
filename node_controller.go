@@ -38,10 +38,12 @@ import (
 )
 
 const (
-	NodeLabelInstanceID        = "alpha.eksctl.io/instance-id"
-	NodeTaintKeyDetaching      = "node-detacher.variant.run/detaching"
-	NodeTaintToBeDeletedByCA   = "ToBeDeletedByClusterAutoscaler"
-	NodeAnnotationKeyDetaching = "node-detacher.variant.run/detaching"
+	NodeLabelInstanceID                  = "alpha.eksctl.io/instance-id"
+	NodeTaintKeyDetaching                = "node-detacher.variant.run/detaching"
+	NodeTaintToBeDeletedByCA             = "ToBeDeletedByClusterAutoscaler"
+	NodeAnnotationKeyDetaching           = "node-detacher.variant.run/detaching"
+	NodeAnnotationKeyDetachmentTimestamp = "node-detacher.variant.run/detachment-timestamp"
+	NodeAnnotationKeyAttachmentTimestamp = "node-detacher.variant.run/attachment-timestamp"
 
 	DaemonSetAnnotationKeyManagedBy     = "node-detacher.variant.run/managed-by"
 	PodAnnotationKeyPodDeletionPriority = "node-detacher.variant.run/deletion-priority"
@@ -387,6 +389,9 @@ func (r *NodeController) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 			updated.Annotations[NodeAnnotationKeyDetaching] = "false"
 
+			updated.Annotations[NodeAnnotationKeyAttachmentTimestamp] = time.Now().Format(time.RFC3339)
+			delete(updated.Annotations, NodeAnnotationKeyDetachmentTimestamp)
+
 			updated.Status.Conditions = append(updated.Status.Conditions, corev1.NodeCondition{
 				Type:               NodeConditionTypeNodeBeingDetached,
 				Status:             corev1.ConditionFalse,
@@ -439,6 +444,9 @@ func (r *NodeController) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	}
 
 	updated.Annotations[NodeAnnotationKeyDetaching] = "true"
+
+	updated.Annotations[NodeAnnotationKeyDetachmentTimestamp] = time.Now().Format(time.RFC3339)
+	delete(updated.Annotations, NodeAnnotationKeyAttachmentTimestamp)
 
 	updated.Status.Conditions = append(updated.Status.Conditions, corev1.NodeCondition{
 		Type:               NodeConditionTypeNodeBeingDetached,

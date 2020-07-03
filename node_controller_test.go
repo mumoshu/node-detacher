@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -261,6 +262,43 @@ var _ = Context("Inside of a new namespace", func() {
 						}
 
 						return found
+					},
+					time.Second*5, time.Millisecond*500).Should(BeEquivalentTo(true))
+
+				Eventually(
+					func() bool {
+						err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, &node)
+						if err != nil {
+							logf.Log.Error(err, "list nodes")
+						}
+
+						a := node.ObjectMeta.Annotations[NodeAnnotationKeyDetaching]
+
+						return a == "true"
+					},
+					time.Second*5, time.Millisecond*500).Should(BeEquivalentTo(true))
+
+				Eventually(
+					func() bool {
+						err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, &node)
+						if err != nil {
+							logf.Log.Error(err, "list nodes")
+						}
+
+						ts := node.ObjectMeta.Annotations[NodeAnnotationKeyDetachmentTimestamp]
+
+						var found *time.Time
+
+						if ts != "" {
+							t, err := time.Parse(time.RFC3339, ts)
+							if err != nil {
+								logf.Log.Error(err, fmt.Sprintf("parsing timestamp %q", ts))
+							} else {
+								found = &t
+							}
+						}
+
+						return found != nil
 					},
 					time.Second*5, time.Millisecond*500).Should(BeEquivalentTo(true))
 			}
