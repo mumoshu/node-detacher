@@ -169,10 +169,10 @@ Here's the set of common questions that may provide you better understanding of 
 - Is the node already being detached?
   - i.e. Does the node have a condition `NodeBeingDetached=True` or an annotation `node-detacher.variant.run/detaching=true`?
 - Is the node is unschedulable?
-  - i.e. Does it have a `ToBeDeletedByClusterAutoscaler` taint, or `node.spec.Unschedulable` set to `true`?
+  - i.e. Does it have a `ToBeDeletedByClusterAutoscaler` taint, or `node.spec.Unschedulable` set to `true`, or `node-detacher.variant.run/detached` annotatino set?
 - Is the node being detached AND is schedulable?
   - Yes
-    - Description: The node was scheduled for detachment, but it is now schedublale.
+    - Description: The node was scheduled for detachment, but it is now schedulable again.
     - Action: Re-attach the node to target groups and CLBs. Then exit the loop.
 - Is the node being detached AND is unschedulable?
   - Yes
@@ -186,6 +186,7 @@ Here's the set of common questions that may provide you better understanding of 
 - Deregister the node from target groups or CLBs
   - Deregister the node from the target group specified by `attachment.spec.awsTargets[]`.
   - Deregister the node from the CLBs specified by `attachment.spec.awsLoadBalancers[]`
+- Gracefully stop all the pods running on the node in the descending order of `node-detacher.variant.run/deletion-priority` annotation values.
 - Mark the node as "being detached"
   - So that in the next loop we won't duplicate the work of de-registering the node
   - More concretely, set the node condition `NodeBeingDetached=True` and a node annotation `node-detacher.variant.run/detaching=true`

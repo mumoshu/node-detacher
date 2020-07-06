@@ -41,6 +41,7 @@ const (
 	NodeLabelInstanceID                  = "alpha.eksctl.io/instance-id"
 	NodeTaintKeyDetaching                = "node-detacher.variant.run/detaching"
 	NodeTaintToBeDeletedByCA             = "ToBeDeletedByClusterAutoscaler"
+	NodeAnnotationKeyDetached            = "node-detacher.variant.run/detached"
 	NodeAnnotationKeyDetaching           = "node-detacher.variant.run/detaching"
 	NodeAnnotationKeyDetachmentTimestamp = "node-detacher.variant.run/detachment-timestamp"
 	NodeAnnotationKeyAttachmentTimestamp = "node-detacher.variant.run/attachment-timestamp"
@@ -223,7 +224,10 @@ func (r *NodeController) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, nil
 	}
 
-	var nodeBeingDetached bool
+	var (
+		nodeBeingDetached bool
+		nodeRequireDetached bool
+	)
 
 	for _, cond := range node.Status.Conditions {
 		if cond.Type == NodeConditionTypeNodeBeingDetached && cond.Status == corev1.ConditionTrue {
@@ -236,8 +240,10 @@ func (r *NodeController) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	for k, v := range node.Annotations {
 		if k == NodeAnnotationKeyDetaching && v == "true" {
 			nodeBeingDetached = true
+		}
 
-			break
+		if k == NodeAnnotationKeyDetached {
+			nodeRequireDetached = true
 		}
 	}
 
@@ -290,7 +296,7 @@ func (r *NodeController) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	// - Node becomes Unschedulable when cordoned
 	// - Node should be considered unschedulable when it is already tained by CA for scale down
 	// - Node should be considered unschedulable when it is already tained by node-detacher for detachment
-	nodeIsSchedulable := !node.Spec.Unschedulable && !toBeDeletedByCA && !hasAnyK8sTaint && !hasAnyCustomTaint
+	nodeIsSchedulable := !node.Spec.Unschedulable && !toBeDeletedByCA && !hasAnyK8sTaint && !hasAnyCustomTaint &&!nodeRequireDetached
 
 	detachNode := func() (*ctrl.Result, error) {
 		if !manageAttachment {
@@ -329,6 +335,10 @@ func (r *NodeController) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	}
 
 	deleteDSPods := func() (*ctrl.Result, error) {
+		if nodeRequireDetached {
+			return nil, nil
+		}
+
 		if err := DeletePods(r.Client, r.CoreV1Client, log, node); err != nil {
 			return &ctrl.Result{RequeueAfter: 1 * time.Second}, err
 		}
