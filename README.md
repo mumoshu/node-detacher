@@ -40,6 +40,11 @@ It can be problematic when your pod has a local write-ahead log that needs to be
 
 `node-detacher` can gracefully stop daemonset pods in response to `cluster-autoscaler` "marks" the node to be deleted, which solves the issue.
 
+## Features
+
+- Detach nodes from AWS ELBs and target groups on various timings including e.g. node scheduled for termination
+- Optionally evict pods in the descending order of the `node-detacher.variant.run/deletion-priority: "PRIORITY"` annotation value on node scale down
+
 ## Use-cases
 
 `node-detacher` complements the following to keep your production services highly available and reliable:
