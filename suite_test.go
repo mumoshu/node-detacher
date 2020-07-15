@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"k8s.io/client-go/kubernetes"
 	"path/filepath"
 	"testing"
 
@@ -37,6 +38,7 @@ import (
 
 var cfg *rest.Config
 var k8sClient client.Client
+var clientset *kubernetes.Clientset
 var testEnv *envtest.Environment
 
 func TestAPIs(t *testing.T) {
@@ -62,7 +64,12 @@ var _ = BeforeSuite(func(done Done) {
 
 	// +kubebuilder:scaffold:scheme
 
-	k8sClient, err = client.New(cfg, client.Options{Scheme: k8scheme.Scheme})
+	clientset, err = kubernetes.NewForConfig(cfg)
+	Expect(err).ToNot(HaveOccurred())
+
+	k8sClient, err = client.New(cfg, client.Options{
+		Scheme: k8scheme.Scheme,
+	})
 	Expect(err).ToNot(HaveOccurred())
 	Expect(k8sClient).ToNot(BeNil())
 

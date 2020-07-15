@@ -6,6 +6,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	k8sscheme "k8s.io/client-go/kubernetes/scheme"
 	"math/rand"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -40,8 +41,12 @@ func SetupTest(ctx context.Context) *corev1.Namespace {
 		mgr, err := ctrl.NewManager(cfg, ctrl.Options{})
 		Expect(err).NotTo(HaveOccurred(), "failed to create manager")
 
+		client, err := kubernetes.NewForConfig(mgr.GetConfig())
+		Expect(err).NotTo(HaveOccurred(), "initializing client-go")
+
 		controller := &NodeController{
 			Client:   mgr.GetClient(),
+			CoreV1Client: client.CoreV1(),
 			Scheme:   k8sscheme.Scheme,
 			Log:      logf.Log,
 			recorder: mgr.GetEventRecorderFor("node-detacher"),
@@ -162,7 +167,7 @@ var _ = Context("Inside of a new namespace", func() {
 			}
 		})
 
-		It("should delete non kube-system pods on unschedulable node", func() {
+		It("should delete annotated pods on unschedulable node", func() {
 			name := "unschedulable-node"
 
 			{
@@ -170,6 +175,25 @@ var _ = Context("Inside of a new namespace", func() {
 					&corev1.Pod{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:      "pod-to-delete",
+							Namespace: ns.Name,
+							Annotations: map[string]string{
+								PodAnnotationDisableEviction: "true",
+								PodAnnotationKeyPodDeletionPriority: "1",
+							},
+						},
+						Spec: corev1.PodSpec{
+							NodeName: name,
+							Containers: []corev1.Container{
+								{
+									Name:  "primary",
+									Image: "nginx:latest",
+								},
+							},
+						},
+					},
+					&corev1.Pod{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "pod-to-live",
 							Namespace: ns.Name,
 							Annotations: map[string]string{
 								PodAnnotationDisableEviction: "true",
@@ -301,10 +325,22 @@ var _ = Context("Inside of a new namespace", func() {
 						return found != nil
 					},
 					time.Second*5, time.Millisecond*500).Should(BeEquivalentTo(true))
+
+
+				// Pod without the priority annotation shouldn't be deleted
+				{
+					var po corev1.Pod
+
+					err := k8sClient.Get(ctx, types.NamespacedName{Namespace: ns.Name, Name: "pod-to-live"}, &po)
+
+					Expect(err).NotTo(HaveOccurred(), "failed to get pod")
+
+					Expect(po.DeletionTimestamp).To(BeNil())
+				}
 			}
 		})
 
-		It("should delete non kube-system pods on node being deleted by cluster-autoscaler", func() {
+		It("should delete annotated pods on node being deleted by cluster-autoscaler", func() {
 			name := "unschedulable-node"
 
 			{
@@ -312,6 +348,43 @@ var _ = Context("Inside of a new namespace", func() {
 					&corev1.Pod{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:      "pod-to-delete",
+							Namespace: ns.Name,
+							Annotations: map[string]string{
+								PodAnnotationDisableEviction: "true",
+								PodAnnotationKeyPodDeletionPriority: "1",
+							},
+						},
+						Spec: corev1.PodSpec{
+							NodeName: name,
+							Containers: []corev1.Container{
+								{
+									Name:  "primary",
+									Image: "nginx:latest",
+								},
+							},
+						},
+					},
+					&corev1.Pod{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "pod-to-evict",
+							Namespace: ns.Name,
+							Annotations: map[string]string{
+								PodAnnotationKeyPodDeletionPriority: "0",
+							},
+						},
+						Spec: corev1.PodSpec{
+							NodeName: name,
+							Containers: []corev1.Container{
+								{
+									Name:  "primary",
+									Image: "nginx:latest",
+								},
+							},
+						},
+					},
+					&corev1.Pod{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "pod-to-live",
 							Namespace: ns.Name,
 							Annotations: map[string]string{
 								PodAnnotationDisableEviction: "true",
@@ -358,6 +431,36 @@ var _ = Context("Inside of a new namespace", func() {
 					updateErr := k8sClient.Update(ctx, &node)
 
 					Expect(updateErr).NotTo(HaveOccurred(), "failed to update test node")
+				}
+
+				Eventually(
+					func() *metav1.Time {
+						var po corev1.Pod
+
+						err := k8sClient.Get(ctx, types.NamespacedName{Namespace: ns.Name, Name: "pod-to-evict"}, &po)
+						if err != nil {
+							logf.Log.Error(err, "getting pod")
+						}
+
+						return po.DeletionTimestamp
+					},
+					time.Second*5, time.Millisecond*500).Should(Not(BeNil()), "Evicted pod's deletion timestamp}")
+
+				{
+					var po corev1.Pod
+
+					err := k8sClient.Get(ctx, types.NamespacedName{Namespace: ns.Name, Name: "pod-to-evict"}, &po)
+
+					Expect(err).NotTo(HaveOccurred(), "failed to get pod")
+
+					Expect(po.DeletionTimestamp).NotTo(BeNil())
+
+					var zero int64 = 0
+					deleteErr := k8sClient.Delete(ctx, &po, &client.DeleteOptions{
+						GracePeriodSeconds: &zero,
+					})
+
+					Expect(deleteErr).NotTo(HaveOccurred(), "failed to delete pod")
 				}
 
 				Eventually(
@@ -411,6 +514,17 @@ var _ = Context("Inside of a new namespace", func() {
 						return found
 					},
 					time.Second*5, time.Millisecond*500).Should(BeEquivalentTo(true))
+			}
+
+			// Pod without the priority annotation shouldn't be deleted
+			{
+				var po corev1.Pod
+
+				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: ns.Name, Name: "pod-to-live"}, &po)
+
+				Expect(err).NotTo(HaveOccurred(), "failed to get pod")
+
+				Expect(po.DeletionTimestamp).To(BeNil())
 			}
 		})
 

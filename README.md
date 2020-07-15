@@ -186,7 +186,8 @@ Here's the set of common questions that may provide you better understanding of 
 - Deregister the node from target groups or CLBs
   - Deregister the node from the target group specified by `attachment.spec.awsTargets[]`.
   - Deregister the node from the CLBs specified by `attachment.spec.awsLoadBalancers[]`
-- Gracefully stop all the pods running on the node in the descending order of `node-detacher.variant.run/deletion-priority` annotation values.
+- Gracefully stop pods running on the node in the descending order of `node-detacher.variant.run/deletion-priority` annotation values
+  - I.e. it doesn't stop pods without the annotation
 - Mark the node as "being detached"
   - So that in the next loop we won't duplicate the work of de-registering the node
   - More concretely, set the node condition `NodeBeingDetached=True` and a node annotation `node-detacher.variant.run/detaching=true`

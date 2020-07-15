@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/api/policy/v1beta1"
@@ -36,12 +37,6 @@ func deletePods(c client.Client, c2 v1.CoreV1Interface, log logr.Logger, node co
 	}
 
 	for _, pod := range pods.Items {
-		if pod.Namespace == "kube-system" {
-			log.V(1).Info("Skipping daemonset in this namespace", "pod", pod.Name, "namespace", pod.Namespace)
-
-			continue
-		}
-
 		var pri int
 
 		priStr, ok := pod.Annotations[PodAnnotationKeyPodDeletionPriority]
@@ -53,7 +48,12 @@ func deletePods(c client.Client, c2 v1.CoreV1Interface, log logr.Logger, node co
 				return err
 			}
 		} else {
-			pri = 0
+			log.V(1).Info(fmt.Sprintf("Skipping pod without %q annotation", PodAnnotationKeyPodDeletionPriority), "pod", types.NamespacedName{
+				Namespace: pod.Namespace,
+				Name:      pod.Name,
+			})
+
+			continue
 		}
 
 		if _, ok := prioritizedPods[pri]; !ok {
